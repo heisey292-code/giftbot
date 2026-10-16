@@ -37,33 +37,50 @@ def normalize_url(raw):
 
 
 def parse_gift_command(text):
+    """
+    Гибкий парсер: принимает и /gift "Название" "ссылка" 100,
+    и /gift "Название" "ссылка" "100",
+    и /gift Название ссылка 100.
+    """
     body = text.replace("/gift", "", 1).strip()
     if not body:
         return None
 
     quoted = re.findall(r'"([^"]*)"', body)
-    without_quotes = re.sub(r'"[^"]*"', "", body).strip()
+    without_quotes = re.sub(r'"[^"]*"', " ", body).strip()
 
-    if len(quoted) >= 2:
+    name = None
+    url = None
+    amount_part = None
+
+    if len(quoted) >= 3:
         name = quoted[0]
         url = normalize_url(quoted[1])
-        amount_part = without_quotes.split()[0] if without_quotes else ""
+        amount_part = quoted[2]
+    elif len(quoted) == 2:
+        name = quoted[0]
+        url = normalize_url(quoted[1])
+        tokens = without_quotes.split()
+        if tokens:
+            amount_part = tokens[0]
     elif len(quoted) == 1:
         name = quoted[0]
-        rest = without_quotes.split()
-        url = normalize_url(rest[0]) if rest else None
-        amount_part = rest[1] if len(rest) >= 2 else ""
+        tokens = without_quotes.split()
+        if len(tokens) >= 2:
+            url = normalize_url(tokens[0])
+            amount_part = tokens[1]
     else:
-        parts = body.split()
-        if len(parts) < 3:
+        tokens = body.split()
+        if len(tokens) < 3:
             return None
-        name = parts[0]
-        url = normalize_url(parts[1])
-        amount_part = parts[2]
+        name = tokens[0]
+        url = normalize_url(tokens[1])
+        amount_part = tokens[2]
 
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
 
-    if not url or not amount:
+    if not name or not url or not amount:
+        print(f"[PARSE] Не удалось распарсить: name={name!r}, url={url!r}, amount={amount!r}")
         return None
 
     return name, url, amount
@@ -172,6 +189,7 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
     }
     if reply_markup is not None:
         kwargs["reply_markup"] = reply_markup
+
     try:
         sent = bot.send_message(**kwargs)
         print(f"[SEND] OK → чат {chat_id}, msg_id={sent.message_id}")
@@ -179,12 +197,26 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
     except Exception as e:
         err = str(e)
         print(f"[SEND] ОШИБКА для чата {chat_id}: {err}")
-        if "CHAT_WRITE_FORBIDDEN" in err:
-            print("  → Собеседник запретил Business-ботов.")
+
+        if "PRIVACY_PREMIUM_REQUIRED" in err:
+            print("  → У собеседника включён Premium-фильтр для незнакомцев.")
+        elif "CHAT_WRITE_FORBIDDEN" in err:
+            print("  → Собеседник запретил приём сообщений от ботов.")
         elif "USER_IS_BLOCKED" in err:
             print("  → Ты заблокирован.")
         elif "PEER_FLOOD" in err:
-            print("  → Спам-блок Telegram. Жди 6–24 часа.")
+            print("  → Спам-блок Telegram на аккаунте. Жди 6–24 часа.")
+        elif "PEER_ID_INVALID" in err:
+            print("  → Чат не поддерживает Business-сообщения.")
+        elif "BUSINESS_CONNECTION" in err:
+            print("  → Telegram отклонил Business-соединение для этого чата.")
+        elif "CHAT_ADMIN_REQUIRED" in err:
+            print("  → Это группа/канал — Business работает только в личке.")
+        elif "FLOOD_WAIT" in err:
+            print("  → Слишком часто. Подожди указанное время.")
+        else:
+            print(f"  → Неизвестная ошибка, разбери текст выше.")
+
         return None
 
 
@@ -350,7 +382,6 @@ def callback_router(call):
 
 # ─────────────────────── ЗАПУСК ───────────────────────
 
-# Flask-сервер нужен только для Render, чтобы он видел «живой» сервис
 app = Flask(__name__)
 
 
@@ -381,10 +412,8 @@ def run_bot():
 
 
 if __name__ == "__main__":
-    # Бот запускается в отдельном потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
-    # Flask слушает порт, который выдаст Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
