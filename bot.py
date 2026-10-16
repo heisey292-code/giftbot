@@ -9,7 +9,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8623132805:AAHjoDJYRGBLuU9BjWtjbL6q5cVvwOtObQA")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8623132805:AAEJXkWwPN6GSMuyW6Jf5eellJJHeuo2eyY")
 
 OWNER_ID = 861423393
 
@@ -38,7 +38,6 @@ def normalize_url(raw):
 
 def parse_gift_command(text):
     """Гибкий парсер: /gift "Название" "ссылка" 100 или /gift "Название" "ссылка" "100"."""
-    # Убираем возможный суффикс @username после /gift
     text = re.sub(r'^/gift(@\w+)?', '/gift', text)
     body = text.replace("/gift", "", 1).strip()
     if not body:
@@ -266,11 +265,9 @@ def handle_all_messages(message):
 
     print(f"[MSG] От {sender_id} в чате {message.chat.id}: {text!r} | conn_id={conn_id}")
 
-    # Реагируем только на владельца
     if sender_id != OWNER_ID:
         return
 
-    # Только /gift
     if not text.startswith("/gift"):
         return
 
@@ -311,7 +308,6 @@ def handle_all_messages(message):
                 "chat_id": message.chat.id,
             }
     else:
-        # Обычный (не Business) чат — просто отвечаем
         bot.send_message(
             message.chat.id,
             build_offer_message(name, url, amount),
