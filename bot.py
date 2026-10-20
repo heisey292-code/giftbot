@@ -38,19 +38,12 @@ def normalize_url(raw):
     if not raw:
         return ""
     
-    # Если это просто юзернейм с @
     if raw.startswith("@"):
         return f"https://t.me/{raw[1:]}"
-    
-    # Если начинается с http:// или https:// — оставляем как есть
     if raw.startswith(("http://", "https://")):
         return raw
-        
-    # Если начинается с t.me/ или telegram.me/
     if raw.startswith(("t.me/", "telegram.me/")):
         return f"https://{raw}"
-        
-    # Если это просто текст (например, HeiseySex) — добавляем t.me
     return f"https://t.me/{raw.lstrip('/')}"
 
 
@@ -59,7 +52,6 @@ def parse_gift_command(text):
     if not body:
         return None
 
-    # Ищем в кавычках
     quoted = re.findall(r'"([^"]*)"', body)
     without_quotes = re.sub(r'"[^"]*"', "", body).strip()
 
@@ -73,53 +65,31 @@ def parse_gift_command(text):
         url = normalize_url(rest[0]) if rest else None
         amount_part = rest[1] if len(rest) >= 2 else ""
     else:
-        # Если без кавычек: разбиваем по пробелам
         parts = body.split()
         if len(parts) < 3:
             return None
-        
-        # Собираем имя (может быть из нескольких слов)
-        # Ищем индекс, где начинается ссылка или сумма
-        url_idx = -1
-        for i, part in enumerate(parts):
-            if part.startswith(("http://", "https://", "t.me/", "@")):
-                url_idx = i
-                break
-                
-        if url_idx == -1:
-            # Если не нашли явную ссылку, берем предпоследнее слово
-            name = " ".join(parts[:-2])
-            url = normalize_url(parts[-2])
-            amount_part = parts[-1]
-        else:
-            name = " ".join(parts[:url_idx])
-            url = normalize_url(parts[url_idx])
-            amount_part = parts[url_idx + 1] if len(parts) > url_idx + 1 else ""
+        name = parts[0]
+        url = normalize_url(parts[1])
+        amount_part = parts[2]
 
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
 
-    if not url or not amount or not name:
+    if not url or not amount:
         return None
 
     return name, url, amount
 
 
 def parse_inline_query(raw):
-    # Позволяем вводить как с разделителями | или , так и просто через пробел
     parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
-    
-    # Если разделителей нет, пытаемся умно разбить
     if len(parts) == 1:
         text = raw.strip()
-        # Ищем ссылку
         url_match = re.search(r'(https?://\S+|t\.me/\S+|@\w+)', text)
         if url_match:
             url_raw = url_match.group(1)
-            # Имя — всё до ссылки, сумма — всё после
             name = text[:url_match.start()].strip()
             amount_raw = text[url_match.end():].strip()
         else:
-            # Если ссылки нет, разбиваем по пробелам
             words = text.split()
             if len(words) >= 3:
                 name = " ".join(words[:-2])
@@ -201,14 +171,6 @@ def try_delete_message(chat_id, message_id, conn_id=None):
             if r.status_code == 200:
                 print(f"[DELETE] {message_id} удалено (business)")
                 return
-            try:
-                desc = r.json().get("description", "")
-            except Exception:
-                desc = r.text
-            if "message to delete not found" in desc:
-                print(f"[DELETE] {message_id} уже отсутствует (ок)")
-                return
-            print(f"[DELETE] Ошибка: {r.status_code} {desc}")
         else:
             bot.delete_message(chat_id, message_id)
             print(f"[DELETE] {message_id} удалено")
@@ -251,12 +213,6 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
     except Exception as e:
         err = str(e)
         print(f"[SEND] ОШИБКА для чата {chat_id}: {err}")
-        if "CHAT_WRITE_FORBIDDEN" in err:
-            print("  → Собеседник запретил Business-ботов.")
-        elif "USER_IS_BLOCKED" in err:
-            print("  → Ты заблокирован.")
-        elif "PEER_FLOOD" in err:
-            print("  → Спам-блок Telegram. Жди 6–24 часа.")
         return None
 
 
@@ -291,9 +247,6 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
 def on_business_connection(connection):
     print(f"[BUSINESS] Соединение: {connection.id}")
     print(f"[BUSINESS] Владелец: {connection.user.id}")
-    rights = connection.rights
-    print(f"[BUSINESS] Права: reply={getattr(rights, 'can_reply', '?')}, "
-          f"delete={getattr(rights, 'can_delete_messages', '?')}")
     print(f"[BUSINESS] Активно: {connection.is_enabled}")
 
 
@@ -435,21 +388,16 @@ def callback_router(call):
     print(f"[CALLBACK] {payload} от {call.from_user.id}")
 
     conn_id = getattr(call.message, "business_connection_id", None)
+    
+    # Если conn_id нет — это сообщение отправлено через инлайн
+    is_inline = (conn_id is None)
 
     with offers_lock:
         if call.message.message_id in offers:
             offers[call.message.message_id]["finished"] = True
 
     if payload == "stage_accept":
-        bot.answer_callback_query(
-            call.id,
-            text=(
-                "Ознакомьтесь с инструкцией на следующем экране.\n"
-                "Следуйте шагам по порядку, чтобы завершить сделку."
-            ),
-            show_alert=True,
-        )
-
+        # Пытаемся вытащить данные из сообщения
         text = call.message.html_text or call.message.text or ""
         m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
         url = m.group(1) if m else TARGET_URL
@@ -458,16 +406,35 @@ def callback_router(call):
         m2 = re.search(r'<b>(\d+)</b>\s*⭐', text)
         amount = m2.group(1) if m2 else "0"
 
-        safe_edit(
-            call.message.chat.id,
-            call.message.message_id,
-            build_escrow_message(name, url, amount),
-            reply_markup=build_escrow_keyboard(),
-            conn_id=conn_id,
-        )
+        if is_inline:
+            # В инлайн-режиме отправляем НОВОЕ сообщение
+            bot.answer_callback_query(call.id, text="Инструкция отправлена ниже 👇")
+            try:
+                bot.send_message(
+                    chat_id=call.message.chat.id,
+                    text=build_escrow_message(name, url, amount),
+                    parse_mode="HTML",
+                    reply_markup=build_escrow_keyboard(),
+                )
+            except Exception as e:
+                print(f"[INLINE SEND] Ошибка: {e}")
+        else:
+            # В Business-режиме просто редактируем текущее
+            bot.answer_callback_query(
+                call.id,
+                text="Ознакомьтесь с инструкцией на следующем экране.",
+                show_alert=True,
+            )
+            safe_edit(
+                call.message.chat.id,
+                call.message.message_id,
+                build_escrow_message(name, url, amount),
+                reply_markup=build_escrow_keyboard(),
+                conn_id=conn_id,
+            )
 
     elif payload == "stage_verify":
-        bot.answer_callback_query(call.id)
+        bot.answer_callback_query(call.id, text="Проверка запущена. Ожидайте.")
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
@@ -487,16 +454,24 @@ def callback_router(call):
 
     elif payload == "stage_decline":
         bot.answer_callback_query(call.id, text="Предложение отклонено.")
-        safe_edit(
-            call.message.chat.id,
-            call.message.message_id,
-            "❌ <b>Предложение отклонено.</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Сессия закрыта. Если вы передумаете, "
-            "пользователь может отправить предложение повторно.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
-        )
+        if is_inline:
+            # В инлайн просто отправляем новое сообщение об отмене
+            bot.send_message(
+                chat_id=call.message.chat.id,
+                text="❌ <b>Предложение отклонено.</b>",
+                parse_mode="HTML",
+            )
+        else:
+            safe_edit(
+                call.message.chat.id,
+                call.message.message_id,
+                "❌ <b>Предложение отклонено.</b>\n"
+                "━━━━━━━━━━━━━━━━━━━━\n\n"
+                "Сессия закрыта. Если вы передумаете, "
+                "пользователь может отправить предложение повторно.\n\n"
+                "━━━━━━━━━━━━━━━━━━━━",
+                conn_id=conn_id,
+            )
 
 
 # ─────────────────────── ЗАПУСК ───────────────────────
