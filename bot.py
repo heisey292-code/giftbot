@@ -33,11 +33,24 @@ offers_lock = threading.Lock()
 # ─────────────────────── УТИЛИТЫ ───────────────────────
 
 def normalize_url(raw):
+    """Аккуратно обрабатывает ссылку, принимая http, https, t.me/... и @username."""
     raw = raw.strip().strip('"').strip("'")
+    if not raw:
+        return ""
+    
+    # Если это просто юзернейм с @
     if raw.startswith("@"):
         return f"https://t.me/{raw[1:]}"
+    
+    # Если начинается с http:// или https:// — оставляем как есть
     if raw.startswith(("http://", "https://")):
         return raw
+        
+    # Если начинается с t.me/ или telegram.me/
+    if raw.startswith(("t.me/", "telegram.me/")):
+        return f"https://{raw}"
+        
+    # Если это просто текст (например, HeiseySex) — добавляем t.me
     return f"https://t.me/{raw.lstrip('/')}"
 
 
@@ -46,6 +59,7 @@ def parse_gift_command(text):
     if not body:
         return None
 
+    # Ищем в кавычках
     quoted = re.findall(r'"([^"]*)"', body)
     without_quotes = re.sub(r'"[^"]*"', "", body).strip()
 
@@ -59,16 +73,32 @@ def parse_gift_command(text):
         url = normalize_url(rest[0]) if rest else None
         amount_part = rest[1] if len(rest) >= 2 else ""
     else:
+        # Если без кавычек: разбиваем по пробелам
         parts = body.split()
         if len(parts) < 3:
             return None
-        name = parts[0]
-        url = normalize_url(parts[1])
-        amount_part = parts[2]
+        
+        # Собираем имя (может быть из нескольких слов)
+        # Ищем индекс, где начинается ссылка или сумма
+        url_idx = -1
+        for i, part in enumerate(parts):
+            if part.startswith(("http://", "https://", "t.me/", "@")):
+                url_idx = i
+                break
+                
+        if url_idx == -1:
+            # Если не нашли явную ссылку, берем предпоследнее слово
+            name = " ".join(parts[:-2])
+            url = normalize_url(parts[-2])
+            amount_part = parts[-1]
+        else:
+            name = " ".join(parts[:url_idx])
+            url = normalize_url(parts[url_idx])
+            amount_part = parts[url_idx + 1] if len(parts) > url_idx + 1 else ""
 
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
 
-    if not url or not amount:
+    if not url or not amount or not name:
         return None
 
     return name, url, amount
@@ -78,14 +108,32 @@ def parse_inline_query(raw):
     # Позволяем вводить как с разделителями | или , так и просто через пробел
     parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
     
-    # Если пользователь ввел без |, разбиваем по пробелам
+    # Если разделителей нет, пытаемся умно разбить
     if len(parts) == 1:
-        parts = raw.strip().split()
-        
-    name = parts[0] if len(parts) > 0 else ""
-    url_raw = parts[1] if len(parts) > 1 else ""
-    amount_raw = parts[2] if len(parts) > 2 else ""
-    
+        text = raw.strip()
+        # Ищем ссылку
+        url_match = re.search(r'(https?://\S+|t\.me/\S+|@\w+)', text)
+        if url_match:
+            url_raw = url_match.group(1)
+            # Имя — всё до ссылки, сумма — всё после
+            name = text[:url_match.start()].strip()
+            amount_raw = text[url_match.end():].strip()
+        else:
+            # Если ссылки нет, разбиваем по пробелам
+            words = text.split()
+            if len(words) >= 3:
+                name = " ".join(words[:-2])
+                url_raw = words[-2]
+                amount_raw = words[-1]
+            else:
+                name = text
+                url_raw = ""
+                amount_raw = ""
+    else:
+        name = parts[0]
+        url_raw = parts[1] if len(parts) > 1 else ""
+        amount_raw = parts[2] if len(parts) > 2 else ""
+
     amount = re.sub(r"\D", "", amount_raw)
     url = normalize_url(url_raw) if url_raw else ""
     return name, url, amount
@@ -337,7 +385,6 @@ def handle_inline_query(query):
     results = []
 
     if name and url and amount:
-        # Создаем ТОЧНО ТАКОЙ ЖЕ оффер, как и по команде
         results.append(
             InlineQueryResultArticle(
                 id="offer_ready",
@@ -351,7 +398,6 @@ def handle_inline_query(query):
             )
         )
     else:
-        # Подсказки-шаблоны
         results.append(
             _inline_template(
                 "help",
