@@ -95,11 +95,9 @@ def extract_name_from_url(url):
     if match:
         raw_name = match.group(1)
         numbers = match.group(2)
-        # PetSnake -> Pet Snake
         name_with_spaces = re.sub(r'(?<!^)(?=[A-Z])', ' ', raw_name)
         return f"{name_with_spaces} #{numbers}"
     
-    # Если ссылка без цифр (на всякий случай)
     match_only_name = re.search(r'/nft/([a-zA-Z]+)', url)
     if match_only_name:
         raw_name = match_only_name.group(1)
@@ -108,8 +106,9 @@ def extract_name_from_url(url):
     return "Подарок"
 
 def parse_offer_command(text):
-    """Убирает префикс .offer или . offer и разбирает аргументы."""
-    body = re.sub(r'^\.\s*offer\s*', '', text, flags=re.IGNORECASE).strip()
+    """Убирает префикс команды (.offer, .heisey) и разбирает аргументы."""
+    # Убираем любую из команд в начале строки
+    body = re.sub(r'^\.\s*(offer|heisey)\s*', '', text, flags=re.IGNORECASE).strip()
     if not body: return None
 
     quoted = re.findall(r'"([^"]*)"', body)
@@ -290,12 +289,22 @@ def handle_business_message(message):
     if sender_id != OWNER_ID: return
     
     text_lower = message.text.strip().lower()
-    if not (text_lower.startswith(".offer") or text_lower.startswith(". offer")):
+    
+    # Проверяем все разрешенные команды (с точкой и без пробела, и с пробелом)
+    valid_prefixes = [".offer", ". offer", ".heisey", ". heisey"]
+    if not any(text_lower.startswith(p) for p in valid_prefixes):
         return
 
     parsed = parse_offer_command(message.text)
     if not parsed:
-        send_business_message(message.chat.id, "❌ Неверный формат команды.\n\nИспользуй: .offer \"Название\" \"ссылка\" 100\nИли: .offer ссылка 100", conn_id)
+        send_business_message(
+            message.chat.id, 
+            "❌ Неверный формат команды.\n\n"
+            "Используй: .offer \"Название\" \"ссылка\" 100\n"
+            "Или: .offer ссылка 100\n"
+            "Или: .heisey ссылка 100", 
+            conn_id
+        )
         return
 
     name, url, amount = parsed
