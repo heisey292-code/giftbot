@@ -17,7 +17,7 @@ from telebot.types import (
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvdTdJ02Bo")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8818760623:AAHYXeTxedyi23QP7BYRRDucqyYsIcr1L9o")
 OWNER_ID = 861423393
 VERIFY_TIMEOUT_SECONDS = 300
 DB_FILE = "users_db.json"
