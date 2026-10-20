@@ -14,7 +14,7 @@ from telebot.types import (
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", ("8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvdTdJ02Bo")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvdTdJ02Bo")
 
 OWNER_ID = 861423393
 
@@ -76,8 +76,7 @@ def parse_gift_command(text):
 
 
 def parse_inline_query(raw):
-    """Разбор строки inline-запроса: Название | ссылка | сумма.
-    Поддерживает '|' и ','."""
+    """Разбор строки inline-запроса: Название | ссылка | сумма."""
     parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
     name = parts[0] if len(parts) > 0 else ""
     url_raw = parts[1] if len(parts) > 1 else ""
@@ -447,19 +446,16 @@ def callback_router(call):
 
 app = Flask(__name__)
 
-
 @app.route("/")
 def index():
     return "Bot is running"
-
 
 @app.route("/health")
 def health():
     return "OK"
 
-
 def run_bot():
-    print("✨ Business-бот запущен (в облаке).")
+    print("✨ Бот запущен.")
     print(f"OWNER_ID: {OWNER_ID}")
     bot.infinity_polling(
         allowed_updates=[
@@ -474,10 +470,11 @@ def run_bot():
         timeout=30,
     )
 
-
 if __name__ == "__main__":
+    # Запускаем бота в фоне
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
+    # Flask слушает порт, чтобы Render не убивал сервис
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
