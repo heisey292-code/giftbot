@@ -75,16 +75,23 @@ def parse_gift_command(text):
 
 
 def parse_inline_query(raw):
+    # Позволяем вводить как с разделителями | или , так и просто через пробел
     parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
+    
+    # Если пользователь ввел без |, разбиваем по пробелам
+    if len(parts) == 1:
+        parts = raw.strip().split()
+        
     name = parts[0] if len(parts) > 0 else ""
     url_raw = parts[1] if len(parts) > 1 else ""
     amount_raw = parts[2] if len(parts) > 2 else ""
+    
     amount = re.sub(r"\D", "", amount_raw)
     url = normalize_url(url_raw) if url_raw else ""
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ (С ФОРМАТИРОВАНИЕМ) ───────────────────────
+# ─────────────────────── ТЕКСТЫ ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
@@ -330,6 +337,7 @@ def handle_inline_query(query):
     results = []
 
     if name and url and amount:
+        # Создаем ТОЧНО ТАКОЙ ЖЕ оффер, как и по команде
         results.append(
             InlineQueryResultArticle(
                 id="offer_ready",
@@ -343,6 +351,7 @@ def handle_inline_query(query):
             )
         )
     else:
+        # Подсказки-шаблоны
         results.append(
             _inline_template(
                 "help",
