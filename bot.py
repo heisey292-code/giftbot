@@ -388,8 +388,6 @@ def callback_router(call):
     print(f"[CALLBACK] {payload} от {call.from_user.id}")
 
     conn_id = getattr(call.message, "business_connection_id", None)
-    
-    # Если conn_id нет — это сообщение отправлено через инлайн
     is_inline = (conn_id is None)
 
     with offers_lock:
@@ -397,7 +395,7 @@ def callback_router(call):
             offers[call.message.message_id]["finished"] = True
 
     if payload == "stage_accept":
-        # Пытаемся вытащить данные из сообщения
+        # Вытаскиваем данные из текста сообщения
         text = call.message.html_text or call.message.text or ""
         m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
         url = m.group(1) if m else TARGET_URL
@@ -407,7 +405,7 @@ def callback_router(call):
         amount = m2.group(1) if m2 else "0"
 
         if is_inline:
-            # В инлайн-режиме отправляем НОВОЕ сообщение
+            # В инлайне ВСЕГДА отправляем новое сообщение (без бизнес-флагов)
             bot.answer_callback_query(call.id, text="Инструкция отправлена ниже 👇")
             try:
                 bot.send_message(
@@ -417,9 +415,9 @@ def callback_router(call):
                     reply_markup=build_escrow_keyboard(),
                 )
             except Exception as e:
-                print(f"[INLINE SEND] Ошибка: {e}")
+                print(f"[INLINE SEND] Ошибка отправки: {e}")
         else:
-            # В Business-режиме просто редактируем текущее
+            # В бизнесе — редактируем текущее
             bot.answer_callback_query(
                 call.id,
                 text="Ознакомьтесь с инструкцией на следующем экране.",
@@ -455,7 +453,6 @@ def callback_router(call):
     elif payload == "stage_decline":
         bot.answer_callback_query(call.id, text="Предложение отклонено.")
         if is_inline:
-            # В инлайн просто отправляем новое сообщение об отмене
             bot.send_message(
                 chat_id=call.message.chat.id,
                 text="❌ <b>Предложение отклонено.</b>",
