@@ -106,9 +106,9 @@ def extract_name_from_url(url):
     return "Подарок"
 
 def parse_offer_command(text):
-    """Убирает префикс команды (.offer, .heisey) и разбирает аргументы."""
-    # Убираем любую из команд в начале строки
-    body = re.sub(r'^\.\s*(offer|heisey)\s*', '', text, flags=re.IGNORECASE).strip()
+    """Убирает префикс команды (с точкой или слешем) и разбирает аргументы."""
+    # Регулярка ищет начало строки, слэш или точку, возможный пробел, и слово
+    body = re.sub(r'^(/|\.)\s*(gift|offer|heisey|nft|сделка)\s*', '', text, flags=re.IGNORECASE).strip()
     if not body: return None
 
     quoted = re.findall(r'"([^"]*)"', body)
@@ -290,8 +290,16 @@ def handle_business_message(message):
     
     text_lower = message.text.strip().lower()
     
-    # Проверяем все разрешенные команды (с точкой и без пробела, и с пробелом)
-    valid_prefixes = [".offer", ". offer", ".heisey", ". heisey"]
+    # Все доступные команды (с точкой и со слэшем, с пробелом и без)
+    valid_prefixes = [
+        "/gift", "/ gift",
+        "/offer", "/ offer", ".offer", ". offer",
+        "/heisey", "/ heisey", ".heisey", ". heisey",
+        "/nft", "/ nft", ".nft", ". nft",
+        "/gift", "/ gift", ".gift", ". gift",
+        "/сделка", "/ сделка", ".сделка", ". сделка"
+    ]
+    
     if not any(text_lower.startswith(p) for p in valid_prefixes):
         return
 
@@ -300,9 +308,9 @@ def handle_business_message(message):
         send_business_message(
             message.chat.id, 
             "❌ Неверный формат команды.\n\n"
-            "Используй: .offer \"Название\" \"ссылка\" 100\n"
-            "Или: .offer ссылка 100\n"
-            "Или: .heisey ссылка 100", 
+            "Используй: /gift \"Название\" \"ссылка\" 100\n"
+            "Или: /offer ссылка 100\n"
+            "Или: /heisey ссылка 100", 
             conn_id
         )
         return
