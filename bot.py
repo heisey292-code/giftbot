@@ -9,7 +9,7 @@ from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton
 
 # ─────────────────────── НАСТРОЙКИ ───────────────────────
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8623132805:AAHjoDJYRGBLuU9BjWtjbL6q5cVvwOtObQA")
+BOT_TOKEN = os.environ.get("BOT_TOKEN", ("")
 
 OWNER_ID = 861423393
 
