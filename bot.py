@@ -9,7 +9,7 @@ from flask import Flask, request
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" 
 RATE_USD = 0.0106      # Курс за 1 звезду в долларах
-USD_TO_RUB = 95.0      # Курс доллара к рублю (для конвертации выплаты)
+USD_TO_RUB = 85.0      # Курс доллара к рублю (теперь 85 рублей)
 
 # Настройки для Webhook (Render)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
@@ -54,7 +54,6 @@ def get_catalog_menu():
 
 def get_sell_menu():
     markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("⭐ Оплатить комиссию (1 ⭐)", callback_data="pay_commission"))
     markup.row(InlineKeyboardButton("📜 История", callback_data="sell_history"))
     markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
     return markup
@@ -110,7 +109,7 @@ def callback_handler(call):
         text = "🌟 <b>Покупка Telegram Stars</b>\n\n• Цена Telegram Stars: 1.5₽/шт.\n\nНажмите кнопку ниже для покупки\n👇"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_catalog_menu())
     
-    # --- ПРОДАЖА ЗВЕЗД (С ОПЛАТОЙ КОМИССИИ) ---
+    # --- ПРОДАЖА ЗВЕЗД ---
     elif call.data == "sell_stars":
         text = (
             "💳 <b>Продажа звёзд</b>\n\n"
@@ -119,18 +118,6 @@ def callback_handler(call):
         )
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_sell_menu())
         bot.register_next_step_handler(call.message, process_sell_stars)
-    
-    elif call.data == "pay_commission":
-        bot.send_invoice(
-            chat_id=call.message.chat.id,
-            title="Комиссия за вывод",
-            description="Оплата комиссии за продажу звезд",
-            invoice_payload="commission_pay",
-            provider_token="",
-            currency="XTR",
-            prices=[LabeledPrice(label="Комиссия", amount=1)] # 1 звезда
-        )
-        bot.answer_callback_query(call.id, "Счет выставлен!")
     
     # --- ПОКУПКА ЗВЕЗД ---
     elif call.data == "buy_stars":
@@ -185,16 +172,22 @@ def process_sell_stars(message):
         bot.send_message(message.chat.id, "Минимальное количество для продажи — 100 звёзд.")
         return
     
-    # Считаем в долларах, затем конвертируем в рубли и округляем
+    # Считаем в долларах, затем конвертируем в рубли (курс 85)
     total_usd = amount * RATE_USD
     total_rub = int(total_usd * USD_TO_RUB)
     
     text = (
         f"✅ <b>Заявка на продажу {amount} ⭐ создана!</b>\n\n"
-        f"К выплате: <b>{total_rub} ₽</b> (по курсу {USD_TO_RUB}₽ за $1)\n\n"
-        f"Чтобы подтвердить заявку, оплатите комиссию (1 ⭐) по кнопке ниже:"
+        f"К выплате: <b>{total_rub} ₽</b>\n\n"
+        f"Отправьте <b>{amount} звёзд</b> нашему боту через профиль и нажмите кнопку ниже."
     )
-    bot.send_message(message.chat.id, text, reply_markup=get_sell_menu())
+    
+    # Кнопка "Оплатить" ровно на то количество звезд, которое ввел пользователь
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton(f"⭐ Оплатить {amount} ⭐", callback_data=f"pay_stars_{amount}"))
+    markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
 
 def process_buy_stars(message):
     if not message.text.isdigit() or int(message.text) < 50:
@@ -220,14 +213,34 @@ def process_ticket(message):
 def checkout(pre_checkout_query):
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
+# Обработка колбэка для оплаты конкретного количества звезд
+@bot.callback_query_handler(func=lambda call: call.data.startswith("pay_stars_"))
+def handle_pay_stars(call):
+    amount = int(call.data.split("_")[2])
+    
+    bot.send_invoice(
+        chat_id=call.message.chat.id,
+        title=f"Оплата {amount} Stars",
+        description=f"Оплата {amount} звезд для подтверждения заявки.",
+        invoice_payload=f"sell_pay_{amount}",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)]
+    )
+    bot.answer_callback_query(call.id, "Счет выставлен!")
+
 @bot.message_handler(content_types=['successful_payment'])
 def got_payment(message):
     payment = message.successful_payment
     
-    if payment.invoice_payload == "commission_pay":
+    if payment.invoice_payload.startswith("sell_pay_"):
+        amount = int(payment.invoice_payload.split("_")[2])
+        # Считаем выплату в рублях по курсу 85
+        payout_rub = int(amount * RATE_USD * USD_TO_RUB)
         bot.send_message(
             message.chat.id, 
-            "✅ <b>Комиссия оплачена!</b>\nТеперь отправьте звезды в профиль бота, и мы зачислим средства.",
+            f"✅ <b>Оплата {amount} ⭐ прошла успешно!</b>\n\n"
+            f"Мы получили ваши звезды. Теперь выплата <b>{payout_rub} ₽</b> будет зачислена на ваш баланс.",
             reply_markup=get_catalog_menu()
         )
     else:
