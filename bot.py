@@ -7,11 +7,13 @@ from telebot.types import (
 from flask import Flask, request
 
 # ================= НАСТРОЙКИ =================
-# Токен теперь берется из переменных окружения Render
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 RATE_USD = 0.0106      # Курс за 1 звезду в долларах
 USD_TO_RUB = 85.0      # Курс доллара к рублю
 COMMISSION = 0.05      # Комиссия 5%
+
+# ТВОЙ ID
+ADMIN_ID = 8498626798  # Уведомления будут приходить сюда
 
 # Настройки для Webhook (Render)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
@@ -21,8 +23,14 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# Временное хранилище данных пользователей
 user_data = {}
+
+# ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ АДМИНА =================
+def notify_admin(text):
+    try:
+        bot.send_message(ADMIN_ID, text, parse_mode="HTML")
+    except Exception as e:
+        print(f"Ошибка отправки админу: {e}")
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu():
@@ -90,6 +98,17 @@ def get_support_menu():
 # ================= ОБРАБОТЧИКИ КОМАНД =================
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
+    user = message.from_user
+    username = f"@{user.username}" if user.username else "Нет"
+    
+    # УВЕДОМЛЕНИЕ АДМИНУ О НОВОМ ПОЛЬЗОВАТЕЛЕ
+    notify_admin(
+        f"🔔 <b>Новый пользователь!</b>\n\n"
+        f"👤 Имя: {user.first_name}\n"
+        f"📝 Username: {username}\n"
+        f"🆔 ID: <code>{user.id}</code>"
+    )
+
     text = (
         "👋 <b>Добро пожаловать в HeiseyStars!</b>\n\n"
         "Мы поможем Вам приобрести Telegram звёзды по минимальной цене.\n\n"
@@ -243,6 +262,7 @@ def process_requisites(message):
     user_data[user_id]['requisites'] = requisites
     amount = user_data[user_id]['amount']
     total_rub = user_data[user_id]['rub']
+    method = user_data[user_id]['method']
     
     text = (
         f"✅ <b>Реквизиты сохранены!</b>\n\n"
@@ -251,7 +271,6 @@ def process_requisites(message):
         f"Нажмите кнопку ниже, чтобы выставить счет на оплату:"
     )
     
-    # Официальный инвойс Telegram на отправку звезд
     bot.send_invoice(
         chat_id=message.chat.id,
         title=f"Перевод {amount} Stars",
@@ -264,6 +283,16 @@ def process_requisites(message):
     )
     
     bot.send_message(message.chat.id, text)
+
+    # УВЕДОМЛЕНИЕ АДМИНУ О СОЗДАНИИ ЗАЯВКИ НА ПРОДАЖУ
+    notify_admin(
+        f"💰 <b>Новая заявка на продажу!</b>\n\n"
+        f"👤 Пользователь: @{message.from_user.username or 'Нет'} (ID: <code>{message.from_user.id}</code>)\n"
+        f"⭐ Количество: {amount}\n"
+        f"💵 К выплате: {total_rub} ₽\n"
+        f"🏦 Способ: {method}\n"
+        f"🔑 Реквизиты: <code>{requisites}</code>"
+    )
 
 def process_buy_stars(message):
     if not message.text.isdigit() or int(message.text) < 50:
@@ -306,11 +335,28 @@ def got_payment(message):
             f"Выплата <b>{payout_rub} ₽</b> отправлена на ваши реквизиты в течение 24 часов.",
             reply_markup=get_catalog_menu()
         )
+
+        # УВЕДОМЛЕНИЕ АДМИНУ ОБ УСПЕШНОЙ ОПЛАТЕ
+        notify_admin(
+            f"🚀 <b>Успешная продажа звезд (ОПЛАЧЕНО)!</b>\n\n"
+            f"👤 Пользователь: @{message.from_user.username or 'Нет'} (ID: <code>{message.from_user.id}</code>)\n"
+            f"⭐ Количество: {amount}\n"
+            f"💵 К выплате: {payout_rub} ₽\n"
+            f"🧾 Чек: <code>{payment.telegram_payment_charge_id}</code>"
+        )
+        
     else:
         bot.send_message(
             message.chat.id, 
             f"✅ <b>Оплата получена!</b>\nКуплено: {payment.total_amount} ⭐",
             reply_markup=get_catalog_menu()
+        )
+        
+        # УВЕДОМЛЕНИЕ АДМИНУ О ПОКУПКЕ
+        notify_admin(
+            f"🛒 <b>Покупка звезд!</b>\n\n"
+            f"👤 Пользователь: @{message.from_user.username or 'Нет'} (ID: <code>{message.from_user.id}</code>)\n"
+            f"⭐ Куплено: {payment.total_amount}"
         )
 
 # ================= НАСТРОЙКА FLASK ДЛЯ RENDER =================
@@ -328,7 +374,6 @@ def webhook():
     else:
         return '', 403
 
-# Убираем хардкод токена в вебхуке, чтобы избежать ошибок, если токен пустой
 if BOT_TOKEN:
     bot.remove_webhook()
     bot.set_webhook(url=WEBHOOK_URL)
