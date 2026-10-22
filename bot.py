@@ -8,7 +8,7 @@ from flask import Flask, request
 
 # ================= НАСТРОЙКИ =================
 # ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ BOTFATHER!
-BOT_TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ЗДЕСЬ" 
+BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" 
 RATE_USD = 0.0106
 
 # Настройки для Webhook (Render)
