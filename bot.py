@@ -28,12 +28,14 @@ dp = Dispatcher()
 # ==================== ЛОКАЛЬНЫЕ КАРТИНКИ =====================
 # ============================================================
 IMAGES = {
-    "gems": "gems.jpg",
-    "bp": "bp.jpg",
-    "cart": "cart.jpg",
-    "royale": "royale.jpg",
-    "pro": "pro.jpg",
+    "start": "start.jpg", 
     "menu": "menu.jpg", 
+    "reviews": "reviews.jpg", # <-- Добавили картинку для отзывов
+    "bp": "bp.jpg",
+    "pro": "pro.jpg",
+    "gems": "gems.jpg",
+    "royale": "royale.jpg",
+    "cart": "cart.jpg",
 }
 
 # ============================================================
@@ -148,7 +150,6 @@ async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, i
     image_path = IMAGES.get(image_key)
     
     if image_path and os.path.exists(image_path):
-        # Отправляем как обычное ФОТО, а не документ
         photo = FSInputFile(image_path)
         media = InputMediaPhoto(media=photo, caption=text, parse_mode="HTML")
         try:
@@ -199,11 +200,16 @@ REVIEWS_TEXT = (
 
 @dp.message(CommandStart())
 async def cmd_start(message: Message):
-    await message.answer(START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
+    image_path = IMAGES.get("start")
+    if image_path and os.path.exists(image_path):
+        photo = FSInputFile(image_path)
+        await message.answer_photo(photo=photo, caption=START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
+    else:
+        await message.answer(START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
 
 @dp.callback_query(F.data == "start")
 async def back_to_start(cb: CallbackQuery):
-    await send_or_edit(cb, START_TEXT, main_menu_kb(), image_key=None)
+    await send_or_edit(cb, START_TEXT, main_menu_kb(), image_key="start")
     await cb.answer()
 
 @dp.callback_query(F.data == "menu")
@@ -213,7 +219,8 @@ async def show_menu(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "reviews")
 async def show_reviews(cb: CallbackQuery):
-    await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_key=None)
+    # Привязали картинку "reviews" к экрану отзывов
+    await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_key="reviews")
     await cb.answer()
 
 @dp.callback_query(F.data.startswith("cat:"))
