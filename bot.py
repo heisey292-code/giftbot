@@ -1,6 +1,9 @@
 import asyncio
 import logging
 import datetime
+import os
+from aiohttp import web
+
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import (
@@ -11,10 +14,16 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "ТВОЙ_ТОКЕН_ОТ_BOTFATHER" 
+BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ"  # ОБЯЗАТЕЛЬНО ЗАМЕНИ НА СВОЙ ТОКЕН!
 RATE_USD = 0.0106 
+
+# Настройки для Webhook
+WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com") # Твой URL из Render
+WEBHOOK_PATH = "/webhook"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -28,22 +37,18 @@ class UserFlow(StatesGroup):
 # ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 def send_photo_or_text(call_or_msg, photo_name, text, reply_markup):
     """Пытается отправить фото, если его нет - отправляет текст."""
-    # Если хочешь картинки, положи файлы menu.jpg, buy.jpg, sell.jpg, profile.jpg, topup.jpg, support.jpg в папку с ботом
     try:
         photo = FSInputFile(photo_name)
         if isinstance(call_or_msg, CallbackQuery):
-            # Для колбеков (редактируем сообщение)
             asyncio.create_task(call_or_msg.message.answer_photo(photo=photo, caption=text, reply_markup=reply_markup))
             asyncio.create_task(call_or_msg.message.delete())
         else:
-            # Для обычных сообщений
             asyncio.create_task(call_or_msg.answer_photo(photo=photo, caption=text, reply_markup=reply_markup))
     except Exception:
         if isinstance(call_or_msg, CallbackQuery):
             asyncio.create_task(call_or_msg.message.edit_text(text, reply_markup=reply_markup))
         else:
             asyncio.create_task(call_or_msg.answer(text, reply_markup=reply_markup))
-
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu():
@@ -117,8 +122,7 @@ def get_support_menu():
     builder.adjust(1, 1)
     return builder.as_markup()
 
-
-# ================= СТАРТ И ГЛАВНОЕ МЕНЮ =================
+# ================= ОБРАБОТЧИКИ =================
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     text = (
@@ -132,12 +136,9 @@ async def cmd_start(message: Message):
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    text = "👋 <b>Главное меню</b>"
-    send_photo_or_text(call, "menu.jpg", text, get_main_menu())
+    send_photo_or_text(call, "menu.jpg", "👋 <b>Главное меню</b>", get_main_menu())
     await call.answer()
 
-
-# ================= ТОВАРЫ TELEGRAM =================
 @dp.callback_query(F.data == "catalog")
 async def open_catalog(call: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -149,7 +150,6 @@ async def open_catalog(call: CallbackQuery, state: FSMContext):
     send_photo_or_text(call, "buy.jpg", text, get_catalog_menu())
     await call.answer()
 
-# --- ПРОДАЖА ЗВЕЗД ---
 @dp.callback_query(F.data == "sell_stars")
 async def prompt_sell_stars(call: CallbackQuery, state: FSMContext):
     text = (
@@ -194,8 +194,6 @@ async def confirm_sell(call: CallbackQuery):
 async def sell_history(call: CallbackQuery):
     await call.answer("История продаж пуста.", show_alert=True)
 
-
-# --- ПОКУПКА ЗВЕЗД ---
 @dp.callback_query(F.data == "buy_stars")
 async def prompt_buy_stars(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text(
@@ -233,14 +231,9 @@ async def success_payment(message: Message):
         reply_markup=get_catalog_menu()
     )
 
-
-# ================= ПОПОЛНЕНИЕ БАЛАНСА =================
 @dp.callback_query(F.data == "topup")
 async def open_topup(call: CallbackQuery):
-    text = (
-        "💳 <b>Пополнение баланса</b>\n\n"
-        "Выберите удобный способ пополнения:"
-    )
+    text = "💳 <b>Пополнение баланса</b>\n\nВыберите удобный способ пополнения:"
     send_photo_or_text(call, "topup.jpg", text, get_topup_menu())
     await call.answer()
 
@@ -248,44 +241,31 @@ async def open_topup(call: CallbackQuery):
 async def topup_stub(call: CallbackQuery):
     await call.answer("Этот способ оплаты временно недоступен.", show_alert=True)
 
-
-# ================= ПРОФИЛЬ =================
 @dp.callback_query(F.data == "profile")
 async def open_profile(call: CallbackQuery):
     user = call.from_user
     username = f"@{user.username}" if user.username else "Нет"
-    
-    # Имитация даты регистрации (текущая дата)
     reg_date = datetime.datetime.now().strftime("%d.%m.%Y\n%H:%M")
     
     text = (
         "👤 <b>Профиль</b>\n\n"
         f"🆔 ID: <code>{user.id}</code>;\n"
         f"📝 Username: {username}.\n\n"
-        "💰 Баланс: 0₽;\n"
-        "└ Общий депозит: 0₽.\n\n"
-        "📦 Заказы:\n"
-        "├ Всего заказов: 0;\n"
-        "├ Выполнено: 0;\n"
-        "├ В обработке: 0;\n"
-        "├ Арендовано NFT-подарков: 0 шт. (~0₽);\n"
-        "├ Арендовано NFT-username: 0 шт. (~0₽);\n"
-        "├ Куплено подарков: 0 шт. (~0₽);\n"
-        "└ Всего куплено звёзд: 0 шт. (~0₽).\n\n"
+        "💰 Баланс: 0₽;\n└ Общий депозит: 0₽.\n\n"
+        "📦 Заказы:\n├ Всего заказов: 0;\n├ Выполнено: 0;\n├ В обработке: 0;\n"
+        "├ Арендовано NFT-подарков: 0 шт. (~0₽);\n├ Арендовано NFT-username: 0 шт. (~0₽);\n"
+        "├ Куплено подарков: 0 шт. (~0₽);\n└ Всего куплено звёзд: 0 шт. (~0₽).\n\n"
         f"📅 Регистрация: {reg_date}."
     )
     send_photo_or_text(call, "profile.jpg", text, get_profile_menu())
     await call.answer()
 
-
-# ================= ПОДДЕРЖКА =================
 @dp.callback_query(F.data == "support")
 async def open_support(call: CallbackQuery):
     text = (
         "📞 <b>Техническая поддержка</b>\n\n"
         "В этом разделе Вы можете создать тикет для связи с поддержкой.\n\n"
-        "📊 <b>Статистика:</b>\n"
-        "• Активных тикетов: 0\n\n"
+        "📊 <b>Статистика:</b>\n• Активных тикетов: 0\n\n"
         "✅ Вы можете создать новый тикет для обращения в поддержку."
     )
     send_photo_or_text(call, "support.jpg", text, get_support_menu())
@@ -300,16 +280,11 @@ async def create_ticket(call: CallbackQuery, state: FSMContext):
 @dp.message(UserFlow.support_ticket)
 async def process_ticket(message: Message, state: FSMContext):
     await state.clear()
-    # Отправляем уведомление пользователю
     await message.answer(
-        "✅ <b>Тикет создан!</b>\nВаше обращение зарегистрировано. Мы ответим вам в ближайшее время.",
+        "✅ <b>Тикет создан!</b>\nВаше обращение зарегистрировано.",
         reply_markup=get_support_menu()
     )
-    # (Опционально) Можешь переслать это сообщение админу
-    # await bot.send_message(ADMIN_ID, f"Новый тикет от {message.from_user.id}:\n{message.text}")
 
-
-# ================= ЗАГЛУШКИ =================
 @dp.callback_query(F.data.in_({
     "buy_premium", "buy_gift", "nft_menu", "ton_menu", "games", 
     "top_clients", "create_bot", "reviews", "sell_nft", "stub"
@@ -317,11 +292,26 @@ async def process_ticket(message: Message, state: FSMContext):
 async def stub_menu(call: CallbackQuery):
     await call.answer("Раздел в разработке 🛠", show_alert=True)
 
+# ================= ЗАПУСК WEBHOOK =================
+async def on_startup(bot: Bot):
+    await bot.set_webhook(WEBHOOK_URL, drop_pending_updates=True)
+    print(f"Webhook установлен: {WEBHOOK_URL}")
 
-# ================= ЗАПУСК =================
 async def main():
-    print("Бот запущен...")
-    await dp.start_polling(bot)
+    dp.startup.register(on_startup)
+    
+    app = web.Application()
+    webhook_requests_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
+    webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+    setup_application(app, dp, bot=bot)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
+    await site.start()
+    
+    print("Сервер запущен на порту", os.getenv("PORT", 8080))
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     try:
