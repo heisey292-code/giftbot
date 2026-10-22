@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message, CallbackQuery,
-    InlineKeyboardMarkup, InputMediaPhoto
+    InlineKeyboardMarkup, InputMediaDocument, FSInputFile
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from flask import Flask
@@ -25,21 +25,16 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ============================================================
-# ==================== ССЫЛКИ НА КАРТИНКИ =====================
+# ==================== ЛОКАЛЬНЫЕ КАРТИНКИ =====================
 # ============================================================
-# Сюда я вставил прямые ссылки на твои новые картинки (и старые)
+# Названия файлов, которые ты только что загрузил на GitHub
 IMAGES = {
-    # Старые (гемы, бп)
-    "gems": "https://i.postimg.cc/ctdDwxJk/1792693082639.jpg", 
-    "bp": "https://i.postimg.cc/tn9rWqgf/1792693141247.jpg",   
-    
-    # Твои новые картинки (Корзина и Рояль Пасс)
-    "cart": "https://i.ibb.co/6P0Z8Z9/cart.jpg", # ЗАМЕНИМ ПОЗЖЕ, если надо
-    "royale": "https://i.ibb.co/3s7yKq1/royale.jpg",
-    
-    # Картинки пока нет, будет просто текст
-    "pro": None,
-    "menu": None,
+    "gems": "gems.jpg",
+    "bp": "bp.jpg",
+    "cart": "cart.jpg",
+    "royale": "royale.jpg",
+    "pro": "pro.jpg",
+    "menu": "menu.jpg", 
 }
 
 # ============================================================
@@ -116,7 +111,7 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 def menu_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🎟 Brawl Pass", callback_data="cat:bp")
-    kb.button(text="👑 Pro Pass", callback_data="cat:pro") # Новая кнопка
+    kb.button(text="👑 Pro Pass", callback_data="cat:pro")
     kb.button(text="💎 Гемы", callback_data="cat:gems")
     kb.button(text="👑 Рояль Пассы", callback_data="cat:royale")
     kb.button(text="🛒 Корзина Supercell", callback_data="cat:cart")
@@ -147,17 +142,20 @@ def reviews_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 # ============================================================
-# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+# ==================== ОТПРАВКА (БЕЗ СЖАТИЯ) ==================
 # ============================================================
 
-async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_url: str = None):
-    if image_url:
-        media = InputMediaPhoto(media=image_url, caption=text, parse_mode="HTML")
+async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_key: str = None):
+    image_path = IMAGES.get(image_key)
+    
+    if image_path and os.path.exists(image_path):
+        photo = FSInputFile(image_path)
+        media = InputMediaDocument(media=photo, caption=text, parse_mode="HTML")
         try:
             await cb.message.edit_media(media=media, reply_markup=kb)
         except Exception:
             await cb.message.delete()
-            await cb.message.answer_photo(photo=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
+            await cb.message.answer_document(document=photo, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
         try:
             await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -166,7 +164,7 @@ async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, i
             await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # ============================================================
-# ==================== ТЕКСТЫ СООБЩЕНИЙ =======================
+# ==================== ТЕКСТЫ =================================
 # ============================================================
 
 START_TEXT = (
@@ -205,24 +203,24 @@ async def cmd_start(message: Message):
 
 @dp.callback_query(F.data == "start")
 async def back_to_start(cb: CallbackQuery):
-    await send_or_edit(cb, START_TEXT, main_menu_kb(), image_url=None)
+    await send_or_edit(cb, START_TEXT, main_menu_kb(), image_key=None)
     await cb.answer()
 
 @dp.callback_query(F.data == "menu")
 async def show_menu(cb: CallbackQuery):
-    await send_or_edit(cb, MENU_TEXT, menu_kb(), image_url=IMAGES.get("menu"))
+    await send_or_edit(cb, MENU_TEXT, menu_kb(), image_key="menu")
     await cb.answer()
 
 @dp.callback_query(F.data == "reviews")
 async def show_reviews(cb: CallbackQuery):
-    await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_url=None)
+    await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_key=None)
     await cb.answer()
 
 @dp.callback_query(F.data.startswith("cat:"))
 async def show_category(cb: CallbackQuery):
     cat_key = cb.data.split(":")[1]
     header, _ = CATEGORIES[cat_key]
-    await send_or_edit(cb, header, category_kb(cat_key), image_url=IMAGES.get(cat_key))
+    await send_or_edit(cb, header, category_kb(cat_key), image_key=cat_key)
     await cb.answer()
 
 @dp.callback_query(F.data.startswith("item:"))
@@ -239,7 +237,7 @@ async def show_item(cb: CallbackQuery):
         f"🛡 Безопасная сделка\n\n"
         f"📩 <b>За покупкой — {SELLER}</b>"
     )
-    await send_or_edit(cb, text, item_kb(cat_key), image_url=IMAGES.get(cat_key))
+    await send_or_edit(cb, text, item_kb(cat_key), image_key=cat_key)
     await cb.answer()
 
 # ============================================================
@@ -260,12 +258,12 @@ def keep_alive():
     t.start()
 
 # ============================================================
-# ==================== ЗАПУСК БОТА ============================
+# ==================== ЗАПУСК =================================
 # ============================================================
 
 async def main():
     keep_alive()
-    print("✅ Бот запущен на Render! Нажми /start в Telegram.")
+    print("✅ Бот запущен с локальными картинками!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
