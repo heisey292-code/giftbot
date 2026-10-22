@@ -1,4 +1,5 @@
 import asyncio
+import os
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
@@ -10,18 +11,24 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 # ============================================================
 # ==================== НАСТРОЙКИ БОТА =========================
 # ============================================================
-BOT_TOKEN = "ВСТАВЬ_СЮДА_ТОКЕН_ОТ_BOTFATHER"
+
+# Берем токен из переменных окружения Render
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+
+if not BOT_TOKEN:
+    raise ValueError("❌ Ошибка: Переменная окружения BOT_TOKEN не найдена! Добавь её в настройках Render.")
+
 SELLER = "@oweli"
 REVIEWS_URL = "https://t.me/oweliotz"
 
+# Инициализация бота
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ============================================================
 # ==================== ССЫЛКИ НА КАРТИНКИ =====================
 # ============================================================
-# Сюда вставь прямые ссылки на твои картинки (например, из твоего ТГ-канала)
-# Пока здесь стоят заглушки. Если ссылка не работает - бот отправит просто текст.
+# Вставь прямые ссылки на картинки (например, с imgbb.com)
 IMAGES = {
     "gems": "https://i.ibb.co/6P0Z8Z9/gems.jpg",  # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
     "bp": "https://i.ibb.co/3s7yKq1/bp.jpg",      # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
@@ -137,21 +144,14 @@ def reviews_kb() -> InlineKeyboardMarkup:
 # ============================================================
 
 async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_url: str = None):
-    """
-    Универсальная функция: 
-    Если передана ссылка на картинку - отправляет/редактирует фото с подписью.
-    Если ссылки нет - отправляет/редактирует просто текст.
-    """
     if image_url:
         media = InputMediaPhoto(media=image_url, caption=text, parse_mode="HTML")
         try:
             await cb.message.edit_media(media=media, reply_markup=kb)
         except Exception:
-            # Если предыдущее сообщение было текстом, удаляем его и шлем новое с фото
             await cb.message.delete()
             await cb.message.answer_photo(photo=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
-        # Если картинки нет, работаем как обычно с текстом
         try:
             await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         except Exception:
@@ -243,7 +243,6 @@ async def show_item(cb: CallbackQuery):
         f"🛡 Безопасная сделка\n\n"
         f"📩 <b>За покупкой — {SELLER}</b>"
     )
-    # Оставляем картинку категории на фоне карточки товара
     await send_or_edit(cb, text, item_kb(cat_key), image_url=IMAGES.get(cat_key))
     await cb.answer()
 
@@ -253,7 +252,7 @@ async def show_item(cb: CallbackQuery):
 # ============================================================
 
 async def main():
-    print("✅ Бот запущен! Нажми /start в Telegram.")
+    print("✅ Бот запущен на Render! Нажми /start в Telegram.")
     await dp.start_polling(bot)
 
 
