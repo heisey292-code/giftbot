@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message, CallbackQuery,
-    InlineKeyboardMarkup, InputMediaDocument, FSInputFile
+    InlineKeyboardMarkup, InputMediaPhoto, FSInputFile
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from flask import Flask
@@ -27,7 +27,6 @@ dp = Dispatcher()
 # ============================================================
 # ==================== ЛОКАЛЬНЫЕ КАРТИНКИ =====================
 # ============================================================
-# Названия файлов, которые ты только что загрузил на GitHub
 IMAGES = {
     "gems": "gems.jpg",
     "bp": "bp.jpg",
@@ -142,20 +141,21 @@ def reviews_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 # ============================================================
-# ==================== ОТПРАВКА (БЕЗ СЖАТИЯ) ==================
+# ==================== ОТПРАВКА ФОТО ==========================
 # ============================================================
 
 async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_key: str = None):
     image_path = IMAGES.get(image_key)
     
     if image_path and os.path.exists(image_path):
+        # Отправляем как обычное ФОТО, а не документ
         photo = FSInputFile(image_path)
-        media = InputMediaDocument(media=photo, caption=text, parse_mode="HTML")
+        media = InputMediaPhoto(media=photo, caption=text, parse_mode="HTML")
         try:
             await cb.message.edit_media(media=media, reply_markup=kb)
         except Exception:
             await cb.message.delete()
-            await cb.message.answer_document(document=photo, caption=text, reply_markup=kb, parse_mode="HTML")
+            await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
         try:
             await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -263,7 +263,7 @@ def keep_alive():
 
 async def main():
     keep_alive()
-    print("✅ Бот запущен с локальными картинками!")
+    print("✅ Бот запущен! Картинки отправляются как фото.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
