@@ -7,9 +7,9 @@ from telebot.types import (
 from flask import Flask, request
 
 # ================= НАСТРОЙКИ =================
-# ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ BOTFATHER!
 BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" 
-RATE_USD = 0.0106
+RATE_USD = 0.0106      # Курс за 1 звезду в долларах
+USD_TO_RUB = 95.0      # Курс доллара к рублю (для конвертации выплаты)
 
 # Настройки для Webhook (Render)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
@@ -93,7 +93,7 @@ def get_support_menu():
 @bot.message_handler(commands=['start'])
 def cmd_start(message):
     text = (
-        "👋 <b>Добро пожаловать в KryptonStars!</b>\n\n"
+        "👋 <b>Добро пожаловать в HeiseyStars!</b>\n\n"
         "Мы поможем Вам приобрести Telegram звёзды по минимальной цене.\n\n"
         "Заказы отправляются автоматически и, как правило, приходят в течение 15 секунд.\n\n"
         "Приятных покупок ✌️"
@@ -110,7 +110,7 @@ def callback_handler(call):
         text = "🌟 <b>Покупка Telegram Stars</b>\n\n• Цена Telegram Stars: 1.5₽/шт.\n\nНажмите кнопку ниже для покупки\n👇"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_catalog_menu())
     
-    # --- ПРОДАЖА ЗВЕЗД (СЦЕНАРИЙ С ОПЛАТОЙ) ---
+    # --- ПРОДАЖА ЗВЕЗД (С ОПЛАТОЙ КОМИССИИ) ---
     elif call.data == "sell_stars":
         text = (
             "💳 <b>Продажа звёзд</b>\n\n"
@@ -120,7 +120,6 @@ def callback_handler(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_sell_menu())
         bot.register_next_step_handler(call.message, process_sell_stars)
     
-    # Обработка кнопки "Оплатить комиссию" (вызывает окно оплаты Stars)
     elif call.data == "pay_commission":
         bot.send_invoice(
             chat_id=call.message.chat.id,
@@ -186,10 +185,13 @@ def process_sell_stars(message):
         bot.send_message(message.chat.id, "Минимальное количество для продажи — 100 звёзд.")
         return
     
-    total_usd = round(amount * RATE_USD, 2)
+    # Считаем в долларах, затем конвертируем в рубли и округляем
+    total_usd = amount * RATE_USD
+    total_rub = int(total_usd * USD_TO_RUB)
+    
     text = (
         f"✅ <b>Заявка на продажу {amount} ⭐ создана!</b>\n\n"
-        f"К выплате: <b>{total_usd}$</b>\n\n"
+        f"К выплате: <b>{total_rub} ₽</b> (по курсу {USD_TO_RUB}₽ за $1)\n\n"
         f"Чтобы подтвердить заявку, оплатите комиссию (1 ⭐) по кнопке ниже:"
     )
     bot.send_message(message.chat.id, text, reply_markup=get_sell_menu())
@@ -222,7 +224,6 @@ def checkout(pre_checkout_query):
 def got_payment(message):
     payment = message.successful_payment
     
-    # Проверяем, что именно оплатили
     if payment.invoice_payload == "commission_pay":
         bot.send_message(
             message.chat.id, 
