@@ -28,11 +28,11 @@ dp = Dispatcher()
 # ============================================================
 # ==================== ССЫЛКИ НА КАРТИНКИ =====================
 # ============================================================
-# Вставь прямые ссылки на картинки (например, с imgbb.com)
+# Твои загруженные картинки с postimages.org
 IMAGES = {
-    "gems": "https://i.ibb.co/6P0Z8Z9/gems.jpg",  # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
-    "bp": "https://i.ibb.co/3s7yKq1/bp.jpg",      # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
-    "cart": "https://i.ibb.co/1J2mXyZ/cart.jpg",  # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
+    "gems": "https://i.postimg.cc/ctdDwxJk/1792693082639.jpg",
+    "bp": "https://i.postimg.cc/tn9rWqgf/1792693141247.jpg",
+    "cart": "https://i.postimg.cc/ctdDwxJ7/1792693209711.jpg",
     "royale": None,
     "menu": None,
 }
