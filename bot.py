@@ -1,383 +1,261 @@
-import os
-import telebot
-from telebot.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, 
-    LabeledPrice, PreCheckoutQuery
+import asyncio
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import CommandStart
+from aiogram.types import (
+    Message, CallbackQuery,
+    InlineKeyboardMarkup, InputMediaPhoto
 )
-from flask import Flask, request
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-# ================= НАСТРОЙКИ =================
-BOT_TOKEN = os.getenv("BOT_TOKEN") 
-RATE_USD = 0.0106      # Курс за 1 звезду в долларах
-USD_TO_RUB = 92.0      # Курс доллара к рублю (изменено на 92)
-COMMISSION = 0.05      # Комиссия 5%
+# ============================================================
+# ==================== НАСТРОЙКИ БОТА =========================
+# ============================================================
+BOT_TOKEN = "ВСТАВЬ_СЮДА_ТОКЕН_ОТ_BOTFATHER"
+SELLER = "@oweli"
+REVIEWS_URL = "https://t.me/oweliotz"
 
-# ТВОЙ ID
-ADMIN_ID = 8498626798  # Уведомления будут приходить сюда
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
 
-# Настройки для Webhook (Render)
-WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
-WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+# ============================================================
+# ==================== ССЫЛКИ НА КАРТИНКИ =====================
+# ============================================================
+# Сюда вставь прямые ссылки на твои картинки (например, из твоего ТГ-канала)
+# Пока здесь стоят заглушки. Если ссылка не работает - бот отправит просто текст.
+IMAGES = {
+    "gems": "https://i.ibb.co/6P0Z8Z9/gems.jpg",  # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
+    "bp": "https://i.ibb.co/3s7yKq1/bp.jpg",      # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
+    "cart": "https://i.ibb.co/1J2mXyZ/cart.jpg",  # <-- ЗАМЕНИ НА СВОЮ ССЫЛКУ
+    "royale": None,
+    "menu": None,
+}
 
-bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
-app = Flask(__name__)
+# ============================================================
+# ==================== ДАННЫЕ О ТОВАРАХ =======================
+# ============================================================
+CATEGORIES = {
+    "bp": (
+        "🎟 <b>BRAWL PASS</b>\n\n"
+        "🔥 Лучшие боевые пропуска по выгодным ценам!\n"
+        "Выбери нужный вариант ниже 👇",
+        [
+            ("БП", "350₽"),
+            ("БП+", "400₽"),
+            ("БП+ Gift", "450₽"),
+            ("Про пасс", "650₽"),
+            ("БП+ х8", "1600₽"),
+        ],
+    ),
+    "gems": (
+        "💎 <b>ГЕМЫ</b>\n\n"
+        "💠 Мгновенная выдача гемов на аккаунт!\n"
+        "Выбери количество 👇",
+        [
+            ("80 💎", "200₽"),
+            ("170 💎", "300₽"),
+            ("360 💎", "500₽"),
+            ("950 💎", "1000₽"),
+            ("2000 💎", "1500₽"),
+            ("4000 💎", "2500₽"),
+            ("6000 💎", "3000₽"),
+            ("12000 💎", "4700₽"),
+        ],
+    ),
+    "royale": (
+        "👑 <b>РОЯЛЬ ПАССЫ</b>\n\n"
+        "🏆 Пропуска для Clash Royale по лучшей цене!\n"
+        "Выбери вариант 👇",
+        [
+            ("Рояль пасс", "370₽"),
+            ("Рояль пасс х8", "1600₽"),
+        ],
+    ),
+    "cart": (
+        "🛒 <b>КОРЗИНА SUPERCELL</b>\n\n"
+        "💵 Пополнение корзины в Supercell Store!\n"
+        "Выбери сумму 👇",
+        [
+            ("Корзина 10$", "300₽"),
+            ("Корзина 30$", "750₽"),
+            ("Корзина 50$", "950₽"),
+            ("Корзина 100$", "1400₽"),
+        ],
+    ),
+}
 
-user_data = {}
 
-# ================= ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ АДМИНА =================
-def notify_admin(text):
-    try:
-        bot.send_message(ADMIN_ID, text, parse_mode="HTML")
-    except Exception as e:
-        print(f"Ошибка отправки админу: {e}")
+# ============================================================
+# ==================== КЛАВИАТУРЫ =============================
+# ============================================================
 
-# ================= КЛАВИАТУРЫ =================
-def get_main_menu():
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🕶 Товары Telegram", callback_data="catalog"))
-    markup.row(InlineKeyboardButton("🤝 Продать NFT", callback_data="sell_nft"))
-    markup.row(InlineKeyboardButton("🕹 Игры", callback_data="games"))
-    markup.row(
-        InlineKeyboardButton("🧢 Пополнить баланс", callback_data="topup"),
-        InlineKeyboardButton("👺 Профиль", callback_data="profile")
-    )
-    markup.row(
-        InlineKeyboardButton("👨‍💻 Поддержка", callback_data="support"),
-        InlineKeyboardButton("👤 Топ клиентов", callback_data="top_clients")
-    )
-    markup.row(InlineKeyboardButton("🧑‍💻 Создать своего бота", callback_data="create_bot"))
-    markup.row(InlineKeyboardButton("🧐 Отзывы", callback_data="reviews"))
-    return markup
+def main_menu_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🛍 Меню", callback_data="menu")
+    kb.button(text="⭐ Отзывы", callback_data="reviews")
+    kb.adjust(1)
+    return kb.as_markup()
 
-def get_catalog_menu():
-    markup = InlineKeyboardMarkup()
-    markup.row(
-        InlineKeyboardButton("🌟 Купить звезды", callback_data="buy_stars"),
-        InlineKeyboardButton("💳 Продать звезды", callback_data="sell_stars")
-    )
-    markup.row(InlineKeyboardButton("🔮 Премиум", callback_data="buy_premium"))
-    markup.row(
-        InlineKeyboardButton("🧸 Купить обычный", callback_data="buy_gift"),
-        InlineKeyboardButton("🐸 NFT", callback_data="nft_menu")
-    )
-    markup.row(InlineKeyboardButton("💎 TON", callback_data="ton_menu"))
-    markup.row(InlineKeyboardButton("« Назад", callback_data="back_to_menu"))
-    return markup
 
-def get_topup_menu():
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("🏳️ СБП #1", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("🏳️ СБП #2", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("💳 Карты РФ #1", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("🐦 CryptoBot", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("🚀 xRocket", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("🪙 Криптовалюта", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("💎 Прямой перевод", callback_data="topup_stub"))
-    markup.row(InlineKeyboardButton("« Назад", callback_data="back_to_menu"))
-    return markup
+def menu_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="🎟 Brawl Pass", callback_data="cat:bp")
+    kb.button(text="💎 Гемы", callback_data="cat:gems")
+    kb.button(text="👑 Рояль Пассы", callback_data="cat:royale")
+    kb.button(text="🛒 Корзина Supercell", callback_data="cat:cart")
+    kb.button(text="⬅️ Назад", callback_data="start")
+    kb.adjust(2, 2, 1)
+    return kb.as_markup()
 
-def get_profile_menu():
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("📜 История покупок", callback_data="stub"))
-    markup.row(InlineKeyboardButton("🎫 Активировать промокод", callback_data="stub"))
-    markup.row(InlineKeyboardButton("👥 Реферальная система", callback_data="stub"))
-    markup.row(InlineKeyboardButton("🧮 Калькулятор", callback_data="stub"))
-    markup.row(InlineKeyboardButton("ℹ️ Информация", callback_data="stub"))
-    markup.row(InlineKeyboardButton("🔌 API", callback_data="stub"))
-    markup.row(InlineKeyboardButton("💸 Вывести реф. баланс", callback_data="stub"))
-    markup.row(InlineKeyboardButton("« В меню", callback_data="back_to_menu"))
-    return markup
 
-def get_support_menu():
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("📝 Создать тикет", callback_data="create_ticket"))
-    markup.row(InlineKeyboardButton("« В меню", callback_data="back_to_menu"))
-    return markup
+def category_kb(cat_key: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    items = CATEGORIES[cat_key][1]
+    for i, (name, _) in enumerate(items):
+        kb.button(text=name, callback_data=f"item:{cat_key}:{i}")
+    kb.button(text="⬅️ Назад", callback_data="menu")
+    kb.adjust(1)
+    return kb.as_markup()
 
-# ================= ОБРАБОТЧИКИ КОМАНД =================
-@bot.message_handler(commands=['start'])
-def cmd_start(message):
-    user = message.from_user
-    username = f"@{user.username}" if user.username else "Нет"
-    
-    # УВЕДОМЛЕНИЕ АДМИНУ О НОВОМ ПОЛЬЗОВАТЕЛЕ
-    notify_admin(
-        f"🔔 <b>Новый пользователь!</b>\n\n"
-        f"👤 Имя: {user.first_name}\n"
-        f"📝 Username: {username}\n"
-        f"🆔 ID: <code>{user.id}</code>"
-    )
 
-    text = (
-        "👋 <b>Добро пожаловать в HeiseyStars!</b>\n\n"
-        "Мы поможем Вам приобрести Telegram звёзды по минимальной цене.\n\n"
-        "Заказы отправляются автоматически и, как правило, приходят в течение 15 секунд.\n\n"
-        "Приятных покупок ✌️"
-    )
-    bot.send_message(message.chat.id, text, reply_markup=get_main_menu())
+def item_kb(cat_key: str) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="⬅️ Назад", callback_data=f"cat:{cat_key}")
+    kb.adjust(1)
+    return kb.as_markup()
 
-# ================= ОБРАБОТЧИКИ КНОПОК (CALLBACK) =================
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    if call.data == "back_to_menu":
-        bot.edit_message_text("👋 <b>Главное меню</b>", call.message.chat.id, call.message.message_id, reply_markup=get_main_menu())
-    
-    elif call.data == "catalog":
-        text = "🌟 <b>Покупка Telegram Stars</b>\n\n• Цена Telegram Stars: 1.5₽/шт.\n\nНажмите кнопку ниже для покупки\n👇"
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_catalog_menu())
-    
-    # --- ПРОДАЖА ЗВЕЗД ---
-    elif call.data == "sell_stars":
-        text = (
-            "💳 <b>Продажа звёзд</b>\n\n"
-            f"• Цена за 1 звезду: {RATE_USD}$.\n\n"
-            "🔍 Введите количество звёзд для продажи (минимум 100 звёзд):"
-        )
-        markup = InlineKeyboardMarkup()
-        markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
-        bot.register_next_step_handler(call.message, process_sell_stars)
-    
-    # --- ВЫБОР СПОСОБА ВЫВОДА ---
-    elif call.data in ["withdraw_usdt", "withdraw_cryptobot", "withdraw_sbp", "withdraw_card"]:
-        user_id = call.from_user.id
-        if user_id not in user_data:
-            bot.answer_callback_query(call.id, "Ошибка. Введите количество звезд заново.", show_alert=True)
-            return
-            
-        method_names = {
-            "withdraw_usdt": "USDT TON",
-            "withdraw_cryptobot": "CryptoBot",
-            "withdraw_sbp": "СБП",
-            "withdraw_card": "Банковская карта"
-        }
-        method = method_names[call.data]
-        user_data[user_id]['method'] = method
-        
-        if call.data == "withdraw_usdt":
-            bot.edit_message_text("Введите адрес вашего USDT кошелька (сеть TON):", call.message.chat.id, call.message.message_id)
-        elif call.data == "withdraw_cryptobot":
-            bot.edit_message_text("Введите ваш ID в CryptoBot (или ссылку на перевод):", call.message.chat.id, call.message.message_id)
-        elif call.data == "withdraw_sbp":
-            bot.edit_message_text("Введите ваш номер телефона (привязанный к СБП):", call.message.chat.id, call.message.message_id)
-        elif call.data == "withdraw_card":
-            bot.edit_message_text("Введите номер вашей банковской карты:", call.message.chat.id, call.message.message_id)
-            
-        bot.register_next_step_handler(call.message, process_requisites)
-    
-    # --- ПОКУПКА ЗВЕЗД ---
-    elif call.data == "buy_stars":
-        bot.edit_message_text(
-            "🌟 <b>Покупка звезд</b>\n\nВведите количество звезд (мин. 50):", 
-            call.message.chat.id, 
-            call.message.message_id, 
-            reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("« Назад", callback_data="catalog"))
-        )
-        bot.register_next_step_handler(call.message, process_buy_stars)
-    
-    elif call.data == "topup":
-        text = "💳 <b>Пополнение баланса</b>\n\nВыберите удобный способ пополнения:"
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_topup_menu())
-    
-    elif call.data == "profile":
-        user = call.from_user
-        username = f"@{user.username}" if user.username else "Нет"
-        text = (
-            "👤 <b>Профиль</b>\n\n"
-            f"🆔 ID: <code>{user.id}</code>;\n"
-            f"📝 Username: {username}.\n\n"
-            "💰 Баланс: 0₽;\n└ Общий депозит: 0₽.\n\n"
-            "📦 Заказы:\n├ Всего заказов: 0;\n├ Выполнено: 0;\n├ В обработке: 0;\n"
-            "├ Арендовано NFT-подарков: 0 шт. (~0₽);\n├ Арендовано NFT-username: 0 шт. (~0₽);\n"
-            "├ Куплено подарков: 0 шт. (~0₽);\n└ Всего куплено звёзд: 0 шт. (~0₽).\n\n"
-            "📅 Регистрация: 22.10.2026."
-        )
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_profile_menu())
-    
-    elif call.data == "support":
-        text = (
-            "📞 <b>Техническая поддержка</b>\n\n"
-            "В этом разделе Вы можете создать тикет для связи с поддержкой.\n\n"
-            "📊 <b>Статистика:</b>\n• Активных тикетов: 0\n\n"
-            "✅ Вы можете создать новый тикет для обращения в поддержку."
-        )
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_support_menu())
-    
-    elif call.data == "create_ticket":
-        bot.edit_message_text("Напишите ваш вопрос одним сообщением:", call.message.chat.id, call.message.message_id)
-        bot.register_next_step_handler(call.message, process_ticket)
-    
-    elif call.data == "sell_history":
-        bot.answer_callback_query(call.id, "История продаж пуста.", show_alert=True)
-    
-    elif call.data in ["buy_premium", "buy_gift", "nft_menu", "ton_menu", "games", "top_clients", "create_bot", "reviews", "sell_nft", "stub", "topup_stub"]:
-        bot.answer_callback_query(call.id, "Раздел в разработке 🛠", show_alert=True)
 
-# ================= ШАГИ (ВВОД ТЕКСТА) =================
-def process_sell_stars(message):
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "Пожалуйста, введите число (например, 100).")
-        return
-    amount = int(message.text)
-    if amount < 100:
-        bot.send_message(message.chat.id, "Минимальное количество для продажи — 100 звёзд.")
-        return
-    
-    total_usd = amount * RATE_USD
-    total_rub = int(total_usd * USD_TO_RUB * (1 - COMMISSION))
-    
-    user_data[message.from_user.id] = {
-        'amount': amount,
-        'rub': total_rub
-    }
-    
-    text = (
-        f"💳 <b>Продажа звёзд</b>\n\n"
-        f"• Количество звёзд: {amount} шт;\n"
-        f"• Цена за звезду: {RATE_USD} USD;\n"
-        f"• Итого: {total_usd:.4f} USD;\n"
-        f"• Цена в рублях: {total_rub} ₽ (с учётом 5% комиссии).\n\n"
-        f"Выберите куда будут отправлены средства 👇"
-    )
-    
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("💎 USDT TON", callback_data="withdraw_usdt"))
-    markup.row(InlineKeyboardButton("🛒 CryptoBot", callback_data="withdraw_cryptobot"))
-    markup.row(
-        InlineKeyboardButton("📱 СБП (от 150₽)", callback_data="withdraw_sbp"),
-        InlineKeyboardButton("💳 Карта (от 1500₽)", callback_data="withdraw_card")
-    )
-    markup.row(InlineKeyboardButton("❌ Отмена", callback_data="catalog"))
-    
-    bot.send_message(message.chat.id, text, reply_markup=markup)
+def reviews_kb() -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📂 Открыть отзывы", url=REVIEWS_URL)
+    kb.button(text="⬅️ Назад", callback_data="start")
+    kb.adjust(1)
+    return kb.as_markup()
 
-def process_requisites(message):
-    user_id = message.from_user.id
-    if user_id not in user_data:
-        bot.send_message(message.chat.id, "Ошибка. Попробуйте заново.")
-        return
-        
-    requisites = message.text
-    user_data[user_id]['requisites'] = requisites
-    amount = user_data[user_id]['amount']
-    total_rub = user_data[user_id]['rub']
-    method = user_data[user_id]['method']
-    
-    text = (
-        f"✅ <b>Реквизиты сохранены!</b>\n\n"
-        f"Для завершения сделки вам необходимо отправить <b>{amount} звёзд</b> нашему боту.\n"
-        f"После этого деньги ({total_rub} ₽) будут отправлены на указанные реквизиты.\n\n"
-        f"Нажмите кнопку ниже, чтобы выставить счет на оплату:"
-    )
-    
-    bot.send_invoice(
-        chat_id=message.chat.id,
-        title=f"Перевод {amount} Stars",
-        description=f"Отправка {amount} звезд боту для вывода {total_rub} ₽",
-        invoice_payload=f"sell_{amount}_{total_rub}",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)],
-        start_parameter="sell_stars"
-    )
-    
-    bot.send_message(message.chat.id, text)
 
-    # УВЕДОМЛЕНИЕ АДМИНУ О СОЗДАНИИ ЗАЯВКИ НА ПРОДАЖУ
-    notify_admin(
-        f"💰 <b>Новая заявка на продажу!</b>\n\n"
-        f"👤 Пользователь: @{message.from_user.username or 'Нет'} (ID: <code>{message.from_user.id}</code>)\n"
-        f"⭐ Количество: {amount}\n"
-        f"💵 К выплате: {total_rub} ₽\n"
-        f"🏦 Способ: {method}\n"
-        f"🔑 Реквизиты: <code>{requisites}</code>"
-    )
+# ============================================================
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
+# ============================================================
 
-def process_buy_stars(message):
-    if not message.text.isdigit() or int(message.text) < 50:
-        bot.send_message(message.chat.id, "Введите число от 50.")
-        return
-    amount = int(message.text)
-    
-    bot.send_invoice(
-        chat_id=message.chat.id,
-        title=f"Покупка {amount} Stars",
-        description=f"Покупка {amount} звезд.",
-        invoice_payload=f"buy_{amount}_{message.from_user.id}",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)]
-    )
-
-def process_ticket(message):
-    bot.send_message(message.chat.id, "✅ <b>Тикет создан!</b>\nВаше обращение зарегистрировано.", reply_markup=get_support_menu())
-
-# ================= ОПЛАТА ЗВЕЗДАМИ =================
-@bot.pre_checkout_query_handler(func=lambda query: True)
-def checkout(pre_checkout_query):
-    bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-@bot.message_handler(content_types=['successful_payment'])
-def got_payment(message):
-    payment = message.successful_payment
-    payload = payment.invoice_payload
-    
-    if payload.startswith("sell_"):
-        parts = payload.split("_")
-        amount = int(parts[1])
-        payout_rub = int(parts[2])
-        
-        bot.send_message(
-            message.chat.id, 
-            f"✅ <b>Звезды успешно получены!</b>\n\n"
-            f"Вы отправили <b>{amount} ⭐</b>.\n"
-            f"Выплата <b>{payout_rub} ₽</b> отправлена на ваши реквизиты в течение 24 часов.",
-            reply_markup=get_catalog_menu()
-        )
-
-        # УВЕДОМЛЕНИЕ АДМИНУ ОБ УСПЕШНОЙ ОПЛАТЕ
-        notify_admin(
-            f"🚀 <b>Успешная продажа звезд (ОПЛАЧЕНО)!</b>\n\n"
-            f"👤 Пользователь: @{message.from_user.username or 'Нет'} (ID: <code>{message.from_user.id}</code>)\n"
-            f"⭐ Количество: {amount}\n"
-            f"💵 К выплате: {payout_rub} ₽\n"
-            f"🧾 Чек: <code>{payment.telegram_payment_charge_id}</code>"
-        )
-        
+async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_url: str = None):
+    """
+    Универсальная функция: 
+    Если передана ссылка на картинку - отправляет/редактирует фото с подписью.
+    Если ссылки нет - отправляет/редактирует просто текст.
+    """
+    if image_url:
+        media = InputMediaPhoto(media=image_url, caption=text, parse_mode="HTML")
+        try:
+            await cb.message.edit_media(media=media, reply_markup=kb)
+        except Exception:
+            # Если предыдущее сообщение было текстом, удаляем его и шлем новое с фото
+            await cb.message.delete()
+            await cb.message.answer_photo(photo=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
-        bot.send_message(
-            message.chat.id, 
-            f"✅ <b>Оплата получена!</b>\nКуплено: {payment.total_amount} ⭐",
-            reply_markup=get_catalog_menu()
-        )
-        
-        # УВЕДОМЛЕНИЕ АДМИНУ О ПОКУПКЕ
-        notify_admin(
-            f"🛒 <b>Покупка звезд!</b>\n\n"
-            f"👤 Пользователь: @{message.from_user.username or 'Нет'} (ID: <code>{message.from_user.id}</code>)\n"
-            f"⭐ Куплено: {payment.total_amount}"
-        )
+        # Если картинки нет, работаем как обычно с текстом
+        try:
+            await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+        except Exception:
+            await cb.message.delete()
+            await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
-# ================= НАСТРОЙКА FLASK ДЛЯ RENDER =================
-@app.route('/', methods=['GET'])
-def index():
-    return "Bot is running!", 200
 
-@app.route(WEBHOOK_PATH, methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return '', 200
-    else:
-        return '', 403
+# ============================================================
+# ==================== ТЕКСТЫ СООБЩЕНИЙ =======================
+# ============================================================
 
-if BOT_TOKEN:
-    bot.remove_webhook()
-    bot.set_webhook(url=WEBHOOK_URL)
+START_TEXT = (
+    "👋 <b>Добро пожаловать в магазин доната Brawl Stars!</b>\n\n"
+    "🔥 Здесь ты найдёшь:\n"
+    "🎟 Brawl Pass и Про Пасс\n"
+    "💎 Гемы по лучшим ценам\n"
+    "👑 Рояль Пассы для Clash Royale\n"
+    "🛒 Пополнение корзины Supercell\n\n"
+    "⚡ Быстрая выдача • 🛡 Безопасно • 💯 Проверено\n\n"
+    "Выбирай нужный раздел 👇"
+)
+
+MENU_TEXT = (
+    "🛍 <b>МЕНЮ МАГАЗИНА</b>\n\n"
+    "🔊 <b>NEW DONATION PRICES</b> — актуальные цены!\n\n"
+    "Выбери категорию товара 👇\n\n"
+    f"💬 По всем вопросам: {SELLER}"
+)
+
+REVIEWS_TEXT = (
+    "⭐ <b>ОТЗЫВЫ НАШИХ КЛИЕНТОВ</b>\n\n"
+    "💬 <i>«Всё пришло за 5 минут, продавец топ!»</i> — @user1\n"
+    "💬 <i>«Брал БП+ — всё честно, рекомендую»</i> — @user2\n"
+    "💬 <i>«Уже 3-я покупка, всегда быстро и без проблем»</i> — @user3\n"
+    "💬 <i>«Гемы пришли моментально, спасибо!»</i> — @user4\n\n"
+    "📂 <b>Больше отзывов в нашем канале:</b>\n"
+    f"👉 {REVIEWS_URL}\n\n"
+    f"📩 Хочешь оставить отзыв? Пиши — {SELLER}\n\n"
+    "👇 Возвращайся в меню"
+)
+
+
+# ============================================================
+# ==================== ХЕНДЛЕРЫ ===============================
+# ============================================================
+
+@dp.message(CommandStart())
+async def cmd_start(message: Message):
+    await message.answer(START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
+
+
+@dp.callback_query(F.data == "start")
+async def back_to_start(cb: CallbackQuery):
+    await send_or_edit(cb, START_TEXT, main_menu_kb(), image_url=None)
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "menu")
+async def show_menu(cb: CallbackQuery):
+    await send_or_edit(cb, MENU_TEXT, menu_kb(), image_url=IMAGES.get("menu"))
+    await cb.answer()
+
+
+@dp.callback_query(F.data == "reviews")
+async def show_reviews(cb: CallbackQuery):
+    await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_url=None)
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("cat:"))
+async def show_category(cb: CallbackQuery):
+    cat_key = cb.data.split(":")[1]
+    header, _ = CATEGORIES[cat_key]
+    await send_or_edit(cb, header, category_kb(cat_key), image_url=IMAGES.get(cat_key))
+    await cb.answer()
+
+
+@dp.callback_query(F.data.startswith("item:"))
+async def show_item(cb: CallbackQuery):
+    _, cat_key, idx = cb.data.split(":")
+    idx = int(idx)
+    name, price = CATEGORIES[cat_key][1][idx]
+
+    text = (
+        f"📦 <b>{name}</b>\n\n"
+        f"💰 Цена: <b>{price}</b>\n\n"
+        f"✅ Товар в наличии\n"
+        f"⚡ Быстрая выдача\n"
+        f"🛡 Безопасная сделка\n\n"
+        f"📩 <b>За покупкой — {SELLER}</b>"
+    )
+    # Оставляем картинку категории на фоне карточки товара
+    await send_or_edit(cb, text, item_kb(cat_key), image_url=IMAGES.get(cat_key))
+    await cb.answer()
+
+
+# ============================================================
+# ==================== ЗАПУСК БОТА ============================
+# ============================================================
+
+async def main():
+    print("✅ Бот запущен! Нажми /start в Telegram.")
+    await dp.start_polling(bot)
+
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8080))
-    app.run(host="0.0.0.0", port=port)
+    asyncio.run(main())
