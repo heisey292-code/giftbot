@@ -7,7 +7,8 @@ from telebot.types import (
 from flask import Flask, request
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" 
+# Токен теперь берется из переменных окружения Render
+BOT_TOKEN = os.getenv("BOT_TOKEN") 
 RATE_USD = 0.0106      # Курс за 1 звезду в долларах
 USD_TO_RUB = 85.0      # Курс доллара к рублю
 COMMISSION = 0.05      # Комиссия 5%
@@ -20,7 +21,7 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
 
-# Временное хранилище данных пользователей (в реальном проекте используй БД)
+# Временное хранилище данных пользователей
 user_data = {}
 
 # ================= КЛАВИАТУРЫ =================
@@ -207,7 +208,6 @@ def process_sell_stars(message):
     total_usd = amount * RATE_USD
     total_rub = int(total_usd * USD_TO_RUB * (1 - COMMISSION))
     
-    # Сохраняем данные пользователя
     user_data[message.from_user.id] = {
         'amount': amount,
         'rub': total_rub
@@ -251,7 +251,7 @@ def process_requisites(message):
         f"Нажмите кнопку ниже, чтобы выставить счет на оплату:"
     )
     
-    # Выставляем ОФИЦИАЛЬНЫЙ ИНВОЙС Telegram на отправку звезд
+    # Официальный инвойс Telegram на отправку звезд
     bot.send_invoice(
         chat_id=message.chat.id,
         title=f"Перевод {amount} Stars",
@@ -328,8 +328,10 @@ def webhook():
     else:
         return '', 403
 
-bot.remove_webhook()
-bot.set_webhook(url=WEBHOOK_URL)
+# Убираем хардкод токена в вебхуке, чтобы избежать ошибок, если токен пустой
+if BOT_TOKEN:
+    bot.remove_webhook()
+    bot.set_webhook(url=WEBHOOK_URL)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
