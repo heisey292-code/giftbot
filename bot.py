@@ -9,7 +9,7 @@ from flask import Flask, request
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = os.getenv("BOT_TOKEN") 
 RATE_USD = 0.0106      # Курс за 1 звезду в долларах
-USD_TO_RUB = 85.0      # Курс доллара к рублю
+USD_TO_RUB = 92.0      # Курс доллара к рублю (изменено на 92)
 COMMISSION = 0.05      # Комиссия 5%
 
 # ТВОЙ ID
