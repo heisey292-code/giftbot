@@ -13,18 +13,17 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.client.default import DefaultBotProperties
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" # Замени на свой токен
+BOT_TOKEN = "ТВОЙ_ТОКЕН_ОТ_BOTFATHER" # Замени на свой токен!
+RATE_USD = 0.0106 # Курс за 1 звезду при продаже боту
 
 logging.basicConfig(level=logging.INFO)
-
-# В aiogram 3.7+ parse_mode задается так:
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
-# ================= СОСТОЯНИЯ (FSM) =================
+# ================= СОСТОЯНИЯ =================
 class UserFlow(StatesGroup):
-    sell_nft_input = State()
-    topup_input = State()
+    buy_stars_input = State()
+    sell_stars_input = State()
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu():
@@ -38,25 +37,30 @@ def get_main_menu():
     builder.button(text="👤 Топ клиентов", callback_data="top_clients")
     builder.button(text="🧑‍💻 Создать своего бота", callback_data="create_bot")
     builder.button(text="🧐 Отзывы", callback_data="reviews")
-    # Сетка: 1, 1, 1, 2, 2, 1, 1
     builder.adjust(1, 1, 1, 2, 2, 1, 1)
     return builder.as_markup()
 
 def get_catalog_menu():
     builder = InlineKeyboardBuilder()
-    builder.button(text="⭐ Купить 50 Stars (50 ⭐)", callback_data="buy_50_stars")
-    builder.button(text="⭐ Купить 100 Stars (100 ⭐)", callback_data="buy_100_stars")
-    builder.button(text="💎 Telegram Premium", callback_data="buy_premium")
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_menu")
-    builder.adjust(1, 1, 1, 1)
+    builder.button(text="🌟 Купить звезды", callback_data="buy_stars")
+    builder.button(text="💳 Продать звезды", callback_data="sell_stars")
+    builder.button(text="🔮 Премиум", callback_data="buy_premium")
+    builder.button(text="🧸 Купить обычный", callback_data="buy_gift")
+    builder.button(text="🐸 NFT", callback_data="nft_menu")
+    builder.button(text="💎 TON", callback_data="ton_menu")
+    builder.button(text="« Назад", callback_data="back_to_menu")
+    builder.adjust(2, 1, 2, 1, 1)
     return builder.as_markup()
 
-def get_back_menu():
+# Кнопки для раздела "Продажа звезд"
+def get_sell_menu():
     builder = InlineKeyboardBuilder()
-    builder.button(text="⬅️ Назад в меню", callback_data="back_to_menu")
+    builder.button(text="📜 История", callback_data="sell_history")
+    builder.button(text="« Назад", callback_data="catalog")
+    builder.adjust(1, 1)
     return builder.as_markup()
 
-# ================= СТАРТ И ГЛАВНОЕ МЕНЮ =================
+# ================= СТАРТ =================
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     text = (
@@ -64,146 +68,159 @@ async def cmd_start(message: Message):
         "У нас вы можете купить:\n"
         "⭐ Telegram Stars\n"
         "💎 Telegram Premium\n"
-        "И много чего другого дешевле чем в приложении и без верификации!\n\n"
-        "🔥 <b>Куплено звезд: 1,143,994</b>"
+        "И много чего другого дешевле чем в приложении и без верификации!"
     )
     await message.answer(text, reply_markup=get_main_menu())
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(call: CallbackQuery, state: FSMContext):
     await state.clear()
-    text = (
-        "👋 <b>Главное меню</b>\n\n"
-        "🔥 <b>Куплено звезд: 1,143,994</b>"
-    )
-    # Редактируем текущее сообщение, чтобы не засорять чат
-    await call.message.edit_text(text, reply_markup=get_main_menu())
+    await call.message.edit_text("👋 <b>Главное меню</b>", reply_markup=get_main_menu())
     await call.answer()
 
-# ================= РАЗДЕЛ "ТОВАРЫ TELEGRAM" (ЗВЕЗДЫ) =================
+# ================= ТОВАРЫ TELEGRAM =================
 @dp.callback_query(F.data == "catalog")
-async def open_catalog(call: CallbackQuery):
+async def open_catalog(call: CallbackQuery, state: FSMContext):
+    await state.clear()
+    text = (
+        "🌟 <b>Покупка Telegram Stars</b>\n\n"
+        "• Цена Telegram Stars: 1.5₽/шт.\n\n"
+        "Нажмите кнопку ниже для покупки\n👇"
+    )
+    await call.message.edit_text(text, reply_markup=get_catalog_menu())
+    await call.answer()
+
+# --- ПРОДАЖА ЗВЕЗД (КАК НА СКРИНШОТЕ) ---
+@dp.callback_query(F.data == "sell_stars")
+async def prompt_sell_stars(call: CallbackQuery, state: FSMContext):
+    text = (
+        "💳 <b>Продажа звёзд</b>\n\n"
+        f"• Цена за 1 звезду: {RATE_USD}$.\n\n"
+        "🔍 Введите количество звёзд для продажи (минимум 100 звёзд):"
+    )
+    
+    # Пытаемся отправить картинку с мишкой. 
+    # ВАЖНО: Положи картинку bear.jpg в папку с ботом (или удали этот блок, если картинки нет)
+    try:
+        from aiogram.types import FSInputFile
+        photo = FSInputFile("bear.jpg") # Имя твоего файла с картинкой
+        await call.message.answer_photo(photo=photo, caption=text, reply_markup=get_sell_menu())
+        await call.message.delete() # Удаляем старое сообщение с меню
+    except Exception:
+        # Если картинки нет, просто отправляем текст
+        await call.message.edit_text(text, reply_markup=get_sell_menu())
+        
+    await state.set_state(UserFlow.sell_stars_input)
+    await call.answer()
+
+@dp.message(UserFlow.sell_stars_input)
+async def process_sell_stars(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Пожалуйста, введите число (например, 100).")
+        return
+    
+    amount = int(message.text)
+    if amount < 100:
+        await message.answer("Минимальное количество для продажи — 100 звёзд. Введите сумму больше.")
+        return
+
+    # Считаем сумму к выплате
+    total_usd = round(amount * RATE_USD, 2)
+    
+    await state.clear()
+    
+    text = (
+        f"✅ <b>Заявка на продажу {amount} ⭐ создана!</b>\n\n"
+        f"К выплате: <b>{total_usd}$</b>\n\n"
+        f"<b>Что делать дальше:</b>\n"
+        f"1. Отправьте <b>{amount} звёзд</b> нашему боту через кнопку 'Подарить звёзды' в нашем профиле.\n"
+        f"2. После отправки нажмите кнопку ниже, чтобы подтвердить перевод.\n\n"
+        f"<i>(В этот момент в реальном боте Fragment API проверяет перевод и зачисляет деньги на баланс)</i>"
+    )
+    
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Я отправил(а) звёзды", callback_data="confirm_sell")
+    builder.button(text="« Назад", callback_data="catalog")
+    builder.adjust(1, 1)
+
+    await message.answer(text, reply_markup=builder.as_markup())
+
+# Заглушка для кнопки "История"
+@dp.callback_query(F.data == "sell_history")
+async def sell_history(call: CallbackQuery):
+    await call.answer("История продаж пуста.", show_alert=True)
+
+# Заглушка для кнопки "Я отправил"
+@dp.callback_query(F.data == "confirm_sell")
+async def confirm_sell(call: CallbackQuery):
     await call.message.edit_text(
-        "🕶 <b>Товары Telegram</b>\n\nВыбери, что хочешь приобрести:",
-        reply_markup=get_catalog_menu()
+        "⏳ <b>Проверяем транзакцию...</b>\n\n"
+        "Пожалуйста, подождите. Если звёзды не зачислятся в течение 10 минут, напишите в поддержку.",
+        reply_markup=get_sell_menu()
     )
     await call.answer()
 
-# --- ОПЛАТА ЗВЕЗДАМИ (XTR) ---
-@dp.callback_query(F.data.in_({"buy_50_stars", "buy_100_stars"}))
-async def send_stars_invoice(call: CallbackQuery):
-    # Определяем цену и количество
-    amount = 50 if call.data == "buy_50_stars" else 100
+
+# --- ПОКУПКА ЗВЕЗД (РЕАЛЬНАЯ ОПЛАТА) ---
+@dp.callback_query(F.data == "buy_stars")
+async def prompt_buy_stars(call: CallbackQuery, state: FSMContext):
+    await call.message.edit_text(
+        "🌟 <b>Покупка звезд</b>\n\n"
+        "Введите количество звезд, которое хотите купить (например: 100):\n"
+        "Минимальный пакет: 50 звезд.",
+        reply_markup=get_sell_menu() # Используем ту же кнопку назад
+    )
+    await state.set_state(UserFlow.buy_stars_input)
+    await call.answer()
+
+@dp.message(UserFlow.buy_stars_input)
+async def process_buy_stars(message: Message, state: FSMContext):
+    if not message.text.isdigit():
+        await message.answer("Пожалуйста, введите число (например, 100).")
+        return
     
-    # ВАЖНО: currency="XTR" - это код Telegram Stars.
-    # provider_token="" - для цифровых товаров оставляем пустым.
+    amount = int(message.text)
+    if amount < 50:
+        await message.answer("Минимальный пакет — 50 звезд.")
+        return
+
+    await state.clear()
     prices = [LabeledPrice(label=f"{amount} Stars", amount=amount)]
     
-    await call.message.answer_invoice(
+    await message.answer_invoice(
         title=f"Покупка {amount} Stars",
         description=f"Покупка {amount} звезд для вашего аккаунта Telegram.",
-        payload=f"stars_order_{amount}_{call.from_user.id}",
-        currency="XTR", 
+        payload=f"buy_stars_{amount}_{message.from_user.id}",
+        currency="XTR",
         prices=prices,
-        provider_token="" 
+        provider_token=""
     )
-    await call.answer()
 
-# Обязательный обработчик: Telegram спрашивает "Все ок?"
 @dp.pre_checkout_query()
 async def pre_checkout_handler(query: PreCheckoutQuery):
-    # Здесь можно проверить наличие товара, лимиты и т.д.
-    # Если всё ок - разрешаем оплату
     await query.answer(ok=True)
 
-# Обработчик успешной оплаты
 @dp.message(F.successful_payment)
 async def success_payment(message: Message):
-    payment: SuccessfulPayment = message.successful_payment
-    
-    # ID платежа нужен для возврата средств, если что-то пойдет не так
-    charge_id = payment.telegram_payment_charge_id
-    
+    payment = message.successful_payment
     await message.answer(
-        f"✅ <b>Оплата успешно получена!</b>\n\n"
-        f"Вы приобрели {payment.total_amount} ⭐\n"
-        f"ID транзакции: <code>{charge_id}</code>\n\n"
-        f"<i>(В реальном боте здесь должна быть логика зачисления звезд на аккаунт через Fragment API)</i>",
-        reply_markup=get_back_menu()
+        f"✅ <b>Оплата получена!</b>\n\n"
+        f"Куплено: {payment.total_amount} ⭐\n"
+        f"Чек: <code>{payment.telegram_payment_charge_id}</code>",
+        reply_markup=get_catalog_menu()
     )
 
 
-# ================= ЗАГЛУШКИ ДЛЯ ОСТАЛЬНЫХ КНОПОК =================
+# ================= ЗАГЛУШКИ =================
 @dp.callback_query(F.data.in_({
-    "games", "profile", "support", 
-    "top_clients", "create_bot", "reviews", "buy_premium"
+    "buy_premium", "buy_gift", "nft_menu", "ton_menu", 
+    "games", "profile", "support", "top_clients", "create_bot", "reviews", "sell_nft", "topup"
 }))
 async def stub_menu(call: CallbackQuery):
-    texts = {
-        "games": "🕹 <b>Игры</b>\n\nРаздел находится в разработке.",
-        "profile": f"👺 <b>Профиль</b>\n\nID: <code>{call.from_user.id}</code>\nБаланс: 0 ⭐\nЗаказов: 0",
-        "support": "👨‍💻 <b>Поддержка</b>\n\nНапишите нашему менеджеру: @support_username",
-        "top_clients": "👤 <b>Топ клиентов</b>\n\n1. Скрыт\n2. Скрыт\n3. Скрыт",
-        "create_bot": "🧑‍💻 <b>Создать своего бота</b>\n\nФункция появится позже.",
-        "reviews": "🧐 <b>Отзывы</b>\n\nОтзывы появятся после первых реальных покупок.",
-        "buy_premium": "💎 <b>Telegram Premium</b>\n\nОплата Premium временно недоступна."
-    }
-    await call.message.edit_text(
-        texts.get(call.data, "В разработке..."), 
-        reply_markup=get_back_menu()
-    )
-    await call.answer()
+    await call.answer("Этот раздел пока в разработке 🛠", show_alert=True)
 
 
-# ================= СЦЕНАРИЙ "ПРОДАТЬ NFT" (ДЛЯ ВИДА) =================
-@dp.callback_query(F.data == "sell_nft")
-async def start_sell_nft(call: CallbackQuery, state: FSMContext):
-    await call.message.edit_text(
-        "🤝 <b>Продажа NFT</b>\n\n"
-        "Отправь ссылку на свой NFT (например, подарок или username):",
-        reply_markup=get_back_menu()
-    )
-    await state.set_state(UserFlow.sell_nft_input)
-    await call.answer()
-
-@dp.message(UserFlow.sell_nft_input)
-async def process_sell_nft(message: Message, state: FSMContext):
-    # Имитация успешной обработки
-    await state.clear()
-    await message.answer(
-        f"✅ <b>Заявка принята!</b>\n\n"
-        f"Ваш NFT <code>{message.text[:50]}</code> отправлен на оценку.\n"
-        f"Результат придет в течение 24 часов.",
-        reply_markup=get_back_menu()
-    )
-
-
-# ================= СЦЕНАРИЙ "ПОПОЛНИТЬ БАЛАНС" (ДЛЯ ВИДА) =================
-@dp.callback_query(F.data == "topup")
-async def start_topup(call: CallbackQuery, state: FSMContext):
-    await call.message.edit_text(
-        "🧢 <b>Пополнение баланса</b>\n\n"
-        "Введите сумму в рублях, на которую хотите пополнить баланс (только число):",
-        reply_markup=get_back_menu()
-    )
-    await state.set_state(UserFlow.topup_input)
-    await call.answer()
-
-@dp.message(UserFlow.topup_input)
-async def process_topup(message: Message, state: FSMContext):
-    if not message.text.isdigit():
-        await message.answer("Пожалуйста, введите число.")
-        return
-        
-    await state.clear()
-    await message.answer(
-        f"✅ <b>Заявка на пополнение на {message.text} ₽ создана!</b>\n\n"
-        f"<i>(Здесь должна быть интеграция с платежной системой CryptoBot или СБП для получения ссылки на оплату)</i>",
-        reply_markup=get_back_menu()
-    )
-
-
-# ================= ЗАПУСК БОТА =================
+# ================= ЗАПУСК =================
 async def main():
     print("Бот запущен...")
     await dp.start_polling(bot)
