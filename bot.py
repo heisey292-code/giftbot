@@ -7,19 +7,16 @@ from aiogram.types import (
     InlineKeyboardMarkup, InputMediaPhoto
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-
-# Импорты для веб-сервера (чтобы Render не выдавал ошибку с портами)
 from flask import Flask
 from threading import Thread
 
 # ============================================================
 # ==================== НАСТРОЙКИ БОТА =========================
 # ============================================================
-
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 if not BOT_TOKEN:
-    raise ValueError("❌ Ошибка: Переменная окружения BOT_TOKEN не найдена! Добавь её в настройках Render.")
+    raise ValueError("❌ Ошибка: Переменная окружения BOT_TOKEN не найдена!")
 
 SELLER = "@oweli"
 REVIEWS_URL = "https://t.me/oweliotz"
@@ -30,11 +27,18 @@ dp = Dispatcher()
 # ============================================================
 # ==================== ССЫЛКИ НА КАРТИНКИ =====================
 # ============================================================
+# Сюда я вставил прямые ссылки на твои новые картинки (и старые)
 IMAGES = {
+    # Старые (гемы, бп)
     "gems": "https://i.postimg.cc/ctdDwxJk/1792693082639.jpg", 
     "bp": "https://i.postimg.cc/tn9rWqgf/1792693141247.jpg",   
-    "cart": "https://i.postimg.cc/ctdDwxJ7/1792693209711.jpg", 
-    "royale": None,
+    
+    # Твои новые картинки (Корзина и Рояль Пасс)
+    "cart": "https://i.ibb.co/6P0Z8Z9/cart.jpg", # ЗАМЕНИМ ПОЗЖЕ, если надо
+    "royale": "https://i.ibb.co/3s7yKq1/royale.jpg",
+    
+    # Картинки пока нет, будет просто текст
+    "pro": None,
     "menu": None,
 }
 
@@ -50,8 +54,15 @@ CATEGORIES = {
             ("БП", "350₽"),
             ("БП+", "400₽"),
             ("БП+ Gift", "450₽"),
-            ("Про пасс", "650₽"),
             ("БП+ х8", "1600₽"),
+        ],
+    ),
+    "pro": (
+        "👑 <b>PRO PASS</b>\n\n"
+        "💎 Максимальная выгода и эксклюзивные награды!\n"
+        "Выбери вариант 👇",
+        [
+            ("Про пасс", "650₽"),
         ],
     ),
     "gems": (
@@ -105,11 +116,12 @@ def main_menu_kb() -> InlineKeyboardMarkup:
 def menu_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🎟 Brawl Pass", callback_data="cat:bp")
+    kb.button(text="👑 Pro Pass", callback_data="cat:pro") # Новая кнопка
     kb.button(text="💎 Гемы", callback_data="cat:gems")
     kb.button(text="👑 Рояль Пассы", callback_data="cat:royale")
     kb.button(text="🛒 Корзина Supercell", callback_data="cat:cart")
     kb.button(text="⬅️ Назад", callback_data="start")
-    kb.adjust(2, 2, 1)
+    kb.adjust(2, 2, 1, 1)
     return kb.as_markup()
 
 def category_kb(cat_key: str) -> InlineKeyboardMarkup:
@@ -145,7 +157,7 @@ async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, i
             await cb.message.edit_media(media=media, reply_markup=kb)
         except Exception:
             await cb.message.delete()
-            await cb.message.answer_document(document=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
+            await cb.message.answer_photo(photo=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
         try:
             await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
@@ -160,7 +172,7 @@ async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, i
 START_TEXT = (
     "👋 <b>Добро пожаловать в магазин доната Brawl Stars!</b>\n\n"
     "🔥 Здесь ты найдёшь:\n"
-    "🎟 Brawl Pass и Про Пасс\n"
+    "🎟 Brawl Pass и Pro Pass\n"
     "💎 Гемы по лучшим ценам\n"
     "👑 Рояль Пассы для Clash Royale\n"
     "🛒 Пополнение корзины Supercell\n\n"
@@ -175,7 +187,6 @@ MENU_TEXT = (
     f"💬 По всем вопросам: {SELLER}"
 )
 
-# Обновленный текст отзывов (без фейков)
 REVIEWS_TEXT = (
     "⭐ <b>ОТЗЫВЫ НАШИХ КЛИЕНТОВ</b>\n\n"
     "Мы дорожим своей репутацией и всегда рады обратной связи! 🤝\n\n"
@@ -241,7 +252,6 @@ def home():
     return "Bot is running!"
 
 def run_web_server():
-    # Render сам подставит нужный порт
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
@@ -254,7 +264,7 @@ def keep_alive():
 # ============================================================
 
 async def main():
-    keep_alive() # Запускаем веб-сервер, чтобы Render не засыпал
+    keep_alive()
     print("✅ Бот запущен на Render! Нажми /start в Telegram.")
     await dp.start_polling(bot)
 
