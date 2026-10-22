@@ -8,11 +8,14 @@ from aiogram.types import (
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+# Импорты для веб-сервера (чтобы Render не выдавал ошибку с портами)
+from flask import Flask
+from threading import Thread
+
 # ============================================================
 # ==================== НАСТРОЙКИ БОТА =========================
 # ============================================================
 
-# Берем токен из переменных окружения Render
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 if not BOT_TOKEN:
@@ -21,18 +24,16 @@ if not BOT_TOKEN:
 SELLER = "@oweli"
 REVIEWS_URL = "https://t.me/oweliotz"
 
-# Инициализация бота
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ============================================================
 # ==================== ССЫЛКИ НА КАРТИНКИ =====================
 # ============================================================
-# Твои загруженные картинки с postimages.org
 IMAGES = {
-    "gems": "https://i.postimg.cc/ctdDwxJk/1792693082639.jpg",
-    "bp": "https://i.postimg.cc/tn9rWqgf/1792693141247.jpg",
-    "cart": "https://i.postimg.cc/ctdDwxJ7/1792693209711.jpg",
+    "gems": "https://i.postimg.cc/ctdDwxJk/1792693082639.jpg", 
+    "bp": "https://i.postimg.cc/tn9rWqgf/1792693141247.jpg",   
+    "cart": "https://i.postimg.cc/ctdDwxJ7/1792693209711.jpg", 
     "royale": None,
     "menu": None,
 }
@@ -90,7 +91,6 @@ CATEGORIES = {
     ),
 }
 
-
 # ============================================================
 # ==================== КЛАВИАТУРЫ =============================
 # ============================================================
@@ -102,7 +102,6 @@ def main_menu_kb() -> InlineKeyboardMarkup:
     kb.adjust(1)
     return kb.as_markup()
 
-
 def menu_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🎟 Brawl Pass", callback_data="cat:bp")
@@ -113,7 +112,6 @@ def menu_kb() -> InlineKeyboardMarkup:
     kb.adjust(2, 2, 1)
     return kb.as_markup()
 
-
 def category_kb(cat_key: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     items = CATEGORIES[cat_key][1]
@@ -123,13 +121,11 @@ def category_kb(cat_key: str) -> InlineKeyboardMarkup:
     kb.adjust(1)
     return kb.as_markup()
 
-
 def item_kb(cat_key: str) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="⬅️ Назад", callback_data=f"cat:{cat_key}")
     kb.adjust(1)
     return kb.as_markup()
-
 
 def reviews_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
@@ -137,7 +133,6 @@ def reviews_kb() -> InlineKeyboardMarkup:
     kb.button(text="⬅️ Назад", callback_data="start")
     kb.adjust(1)
     return kb.as_markup()
-
 
 # ============================================================
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ================
@@ -150,14 +145,13 @@ async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, i
             await cb.message.edit_media(media=media, reply_markup=kb)
         except Exception:
             await cb.message.delete()
-            await cb.message.answer_photo(photo=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
+            await cb.message.answer_document(document=image_url, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
         try:
             await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
         except Exception:
             await cb.message.delete()
             await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
-
 
 # ============================================================
 # ==================== ТЕКСТЫ СООБЩЕНИЙ =======================
@@ -181,18 +175,14 @@ MENU_TEXT = (
     f"💬 По всем вопросам: {SELLER}"
 )
 
+# Обновленный текст отзывов (без фейков)
 REVIEWS_TEXT = (
     "⭐ <b>ОТЗЫВЫ НАШИХ КЛИЕНТОВ</b>\n\n"
-    "💬 <i>«Всё пришло за 5 минут, продавец топ!»</i> — @user1\n"
-    "💬 <i>«Брал БП+ — всё честно, рекомендую»</i> — @user2\n"
-    "💬 <i>«Уже 3-я покупка, всегда быстро и без проблем»</i> — @user3\n"
-    "💬 <i>«Гемы пришли моментально, спасибо!»</i> — @user4\n\n"
-    "📂 <b>Больше отзывов в нашем канале:</b>\n"
-    f"👉 {REVIEWS_URL}\n\n"
-    f"📩 Хочешь оставить отзыв? Пиши — {SELLER}\n\n"
-    "👇 Возвращайся в меню"
+    "Мы дорожим своей репутацией и всегда рады обратной связи! 🤝\n\n"
+    "📂 <b>Все реальные отзывы и доказательства сделок опубликованы в нашем канале.</b>\n\n"
+    "👇 Нажми на кнопку ниже, чтобы перейти и убедиться в качестве нашего сервиса:\n\n"
+    f"📩 Хочешь оставить свой отзыв? Пиши — {SELLER}"
 )
-
 
 # ============================================================
 # ==================== ХЕНДЛЕРЫ ===============================
@@ -202,24 +192,20 @@ REVIEWS_TEXT = (
 async def cmd_start(message: Message):
     await message.answer(START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
 
-
 @dp.callback_query(F.data == "start")
 async def back_to_start(cb: CallbackQuery):
     await send_or_edit(cb, START_TEXT, main_menu_kb(), image_url=None)
     await cb.answer()
-
 
 @dp.callback_query(F.data == "menu")
 async def show_menu(cb: CallbackQuery):
     await send_or_edit(cb, MENU_TEXT, menu_kb(), image_url=IMAGES.get("menu"))
     await cb.answer()
 
-
 @dp.callback_query(F.data == "reviews")
 async def show_reviews(cb: CallbackQuery):
     await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_url=None)
     await cb.answer()
-
 
 @dp.callback_query(F.data.startswith("cat:"))
 async def show_category(cb: CallbackQuery):
@@ -227,7 +213,6 @@ async def show_category(cb: CallbackQuery):
     header, _ = CATEGORIES[cat_key]
     await send_or_edit(cb, header, category_kb(cat_key), image_url=IMAGES.get(cat_key))
     await cb.answer()
-
 
 @dp.callback_query(F.data.startswith("item:"))
 async def show_item(cb: CallbackQuery):
@@ -246,15 +231,32 @@ async def show_item(cb: CallbackQuery):
     await send_or_edit(cb, text, item_kb(cat_key), image_url=IMAGES.get(cat_key))
     await cb.answer()
 
+# ============================================================
+# ==================== FLASK (ДЛЯ RENDER) =====================
+# ============================================================
+app = Flask('')
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web_server():
+    # Render сам подставит нужный порт
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host='0.0.0.0', port=port)
+
+def keep_alive():
+    t = Thread(target=run_web_server)
+    t.start()
 
 # ============================================================
 # ==================== ЗАПУСК БОТА ============================
 # ============================================================
 
 async def main():
+    keep_alive() # Запускаем веб-сервер, чтобы Render не засыпал
     print("✅ Бот запущен на Render! Нажми /start в Telegram.")
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
