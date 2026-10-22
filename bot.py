@@ -10,6 +10,7 @@ from flask import Flask, request
 BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" 
 RATE_USD = 0.0106      # Курс за 1 звезду в долларах
 USD_TO_RUB = 85.0      # Курс доллара к рублю
+COMMISSION = 0.05      # Комиссия 5%
 
 # Настройки для Webhook (Render)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
@@ -18,6 +19,9 @@ WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
 
 bot = telebot.TeleBot(BOT_TOKEN, parse_mode="HTML")
 app = Flask(__name__)
+
+# Временное хранилище данных пользователей (в реальном проекте используй БД)
+user_data = {}
 
 # ================= КЛАВИАТУРЫ =================
 def get_main_menu():
@@ -103,18 +107,44 @@ def callback_handler(call):
         text = "🌟 <b>Покупка Telegram Stars</b>\n\n• Цена Telegram Stars: 1.5₽/шт.\n\nНажмите кнопку ниже для покупки\n👇"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_catalog_menu())
     
-    # --- ПРОДАЖА ЗВЕЗД (ЗДЕСЬ БУДЕТ ОФИЦИАЛЬНАЯ ОПЛАТА) ---
+    # --- ПРОДАЖА ЗВЕЗД ---
     elif call.data == "sell_stars":
         text = (
             "💳 <b>Продажа звёзд</b>\n\n"
             f"• Цена за 1 звезду: {RATE_USD}$.\n\n"
             "🔍 Введите количество звёзд для продажи (минимум 100 звёзд):"
         )
-        # Создаем кнопку "Назад" для этого шага
         markup = InlineKeyboardMarkup()
         markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
         bot.register_next_step_handler(call.message, process_sell_stars)
+    
+    # --- ВЫБОР СПОСОБА ВЫВОДА ---
+    elif call.data in ["withdraw_usdt", "withdraw_cryptobot", "withdraw_sbp", "withdraw_card"]:
+        user_id = call.from_user.id
+        if user_id not in user_data:
+            bot.answer_callback_query(call.id, "Ошибка. Введите количество звезд заново.", show_alert=True)
+            return
+            
+        method_names = {
+            "withdraw_usdt": "USDT TON",
+            "withdraw_cryptobot": "CryptoBot",
+            "withdraw_sbp": "СБП",
+            "withdraw_card": "Банковская карта"
+        }
+        method = method_names[call.data]
+        user_data[user_id]['method'] = method
+        
+        if call.data == "withdraw_usdt":
+            bot.edit_message_text("Введите адрес вашего USDT кошелька (сеть TON):", call.message.chat.id, call.message.message_id)
+        elif call.data == "withdraw_cryptobot":
+            bot.edit_message_text("Введите ваш ID в CryptoBot (или ссылку на перевод):", call.message.chat.id, call.message.message_id)
+        elif call.data == "withdraw_sbp":
+            bot.edit_message_text("Введите ваш номер телефона (привязанный к СБП):", call.message.chat.id, call.message.message_id)
+        elif call.data == "withdraw_card":
+            bot.edit_message_text("Введите номер вашей банковской карты:", call.message.chat.id, call.message.message_id)
+            
+        bot.register_next_step_handler(call.message, process_requisites)
     
     # --- ПОКУПКА ЗВЕЗД ---
     elif call.data == "buy_stars":
@@ -174,20 +204,66 @@ def process_sell_stars(message):
         bot.send_message(message.chat.id, "Минимальное количество для продажи — 100 звёзд.")
         return
     
-    # Считаем сумму к выплате в рублях
     total_usd = amount * RATE_USD
-    total_rub = int(total_usd * USD_TO_RUB)
+    total_rub = int(total_usd * USD_TO_RUB * (1 - COMMISSION))
     
-    # Отправляем официальный счет от Telegram на оплату нужного количества звезд
+    # Сохраняем данные пользователя
+    user_data[message.from_user.id] = {
+        'amount': amount,
+        'rub': total_rub
+    }
+    
+    text = (
+        f"💳 <b>Продажа звёзд</b>\n\n"
+        f"• Количество звёзд: {amount} шт;\n"
+        f"• Цена за звезду: {RATE_USD} USD;\n"
+        f"• Итого: {total_usd:.4f} USD;\n"
+        f"• Цена в рублях: {total_rub} ₽ (с учётом 5% комиссии).\n\n"
+        f"Выберите куда будут отправлены средства 👇"
+    )
+    
+    markup = InlineKeyboardMarkup()
+    markup.row(InlineKeyboardButton("💎 USDT TON", callback_data="withdraw_usdt"))
+    markup.row(InlineKeyboardButton("🛒 CryptoBot", callback_data="withdraw_cryptobot"))
+    markup.row(
+        InlineKeyboardButton("📱 СБП (от 150₽)", callback_data="withdraw_sbp"),
+        InlineKeyboardButton("💳 Карта (от 1500₽)", callback_data="withdraw_card")
+    )
+    markup.row(InlineKeyboardButton("❌ Отмена", callback_data="catalog"))
+    
+    bot.send_message(message.chat.id, text, reply_markup=markup)
+
+def process_requisites(message):
+    user_id = message.from_user.id
+    if user_id not in user_data:
+        bot.send_message(message.chat.id, "Ошибка. Попробуйте заново.")
+        return
+        
+    requisites = message.text
+    user_data[user_id]['requisites'] = requisites
+    amount = user_data[user_id]['amount']
+    total_rub = user_data[user_id]['rub']
+    
+    text = (
+        f"✅ <b>Реквизиты сохранены!</b>\n\n"
+        f"Для завершения сделки вам необходимо отправить <b>{amount} звёзд</b> нашему боту.\n"
+        f"После этого деньги ({total_rub} ₽) будут отправлены на указанные реквизиты.\n\n"
+        f"Нажмите кнопку ниже, чтобы выставить счет на оплату:"
+    )
+    
+    # Выставляем ОФИЦИАЛЬНЫЙ ИНВОЙС Telegram на отправку звезд
     bot.send_invoice(
         chat_id=message.chat.id,
-        title=f"Продажа {amount} Stars",
-        description=f"Перевод {amount} звезд боту. К выплате: {total_rub} ₽",
-        invoice_payload=f"sell_{amount}_{total_rub}", # Сохраняем сумму к выплате в payload
-        provider_token="", 
-        currency="XTR", 
-        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)]
+        title=f"Перевод {amount} Stars",
+        description=f"Отправка {amount} звезд боту для вывода {total_rub} ₽",
+        invoice_payload=f"sell_{amount}_{total_rub}",
+        provider_token="",
+        currency="XTR",
+        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)],
+        start_parameter="sell_stars"
     )
+    
+    bot.send_message(message.chat.id, text)
 
 def process_buy_stars(message):
     if not message.text.isdigit() or int(message.text) < 50:
@@ -211,7 +287,6 @@ def process_ticket(message):
 # ================= ОПЛАТА ЗВЕЗДАМИ =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def checkout(pre_checkout_query):
-    # Обязательно разрешаем оплату
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
 
 @bot.message_handler(content_types=['successful_payment'])
@@ -219,7 +294,6 @@ def got_payment(message):
     payment = message.successful_payment
     payload = payment.invoice_payload
     
-    # Проверяем, что это была продажа звезд
     if payload.startswith("sell_"):
         parts = payload.split("_")
         amount = int(parts[1])
@@ -227,9 +301,9 @@ def got_payment(message):
         
         bot.send_message(
             message.chat.id, 
-            f"✅ <b>Успешно!</b>\n\n"
-            f"Вы продали <b>{amount} ⭐</b>.\n"
-            f"На ваш баланс зачислено: <b>{payout_rub} ₽</b>.",
+            f"✅ <b>Звезды успешно получены!</b>\n\n"
+            f"Вы отправили <b>{amount} ⭐</b>.\n"
+            f"Выплата <b>{payout_rub} ₽</b> отправлена на ваши реквизиты в течение 24 часов.",
             reply_markup=get_catalog_menu()
         )
     else:
