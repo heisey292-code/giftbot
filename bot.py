@@ -9,7 +9,7 @@ from flask import Flask, request
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" 
 RATE_USD = 0.0106      # Курс за 1 звезду в долларах
-USD_TO_RUB = 85.0      # Курс доллара к рублю (теперь 85 рублей)
+USD_TO_RUB = 85.0      # Курс доллара к рублю
 
 # Настройки для Webhook (Render)
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
@@ -50,12 +50,6 @@ def get_catalog_menu():
     )
     markup.row(InlineKeyboardButton("💎 TON", callback_data="ton_menu"))
     markup.row(InlineKeyboardButton("« Назад", callback_data="back_to_menu"))
-    return markup
-
-def get_sell_menu():
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton("📜 История", callback_data="sell_history"))
-    markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
     return markup
 
 def get_topup_menu():
@@ -109,19 +103,27 @@ def callback_handler(call):
         text = "🌟 <b>Покупка Telegram Stars</b>\n\n• Цена Telegram Stars: 1.5₽/шт.\n\nНажмите кнопку ниже для покупки\n👇"
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_catalog_menu())
     
-    # --- ПРОДАЖА ЗВЕЗД ---
+    # --- ПРОДАЖА ЗВЕЗД (ЗДЕСЬ БУДЕТ ОФИЦИАЛЬНАЯ ОПЛАТА) ---
     elif call.data == "sell_stars":
         text = (
             "💳 <b>Продажа звёзд</b>\n\n"
             f"• Цена за 1 звезду: {RATE_USD}$.\n\n"
             "🔍 Введите количество звёзд для продажи (минимум 100 звёзд):"
         )
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=get_sell_menu())
+        # Создаем кнопку "Назад" для этого шага
+        markup = InlineKeyboardMarkup()
+        markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, reply_markup=markup)
         bot.register_next_step_handler(call.message, process_sell_stars)
     
     # --- ПОКУПКА ЗВЕЗД ---
     elif call.data == "buy_stars":
-        bot.edit_message_text("🌟 <b>Покупка звезд</b>\n\nВведите количество звезд (мин. 50):", call.message.chat.id, call.message.message_id, reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("« Назад", callback_data="catalog")))
+        bot.edit_message_text(
+            "🌟 <b>Покупка звезд</b>\n\nВведите количество звезд (мин. 50):", 
+            call.message.chat.id, 
+            call.message.message_id, 
+            reply_markup=InlineKeyboardMarkup().row(InlineKeyboardButton("« Назад", callback_data="catalog"))
+        )
         bot.register_next_step_handler(call.message, process_buy_stars)
     
     elif call.data == "topup":
@@ -172,22 +174,20 @@ def process_sell_stars(message):
         bot.send_message(message.chat.id, "Минимальное количество для продажи — 100 звёзд.")
         return
     
-    # Считаем в долларах, затем конвертируем в рубли (курс 85)
+    # Считаем сумму к выплате в рублях
     total_usd = amount * RATE_USD
     total_rub = int(total_usd * USD_TO_RUB)
     
-    text = (
-        f"✅ <b>Заявка на продажу {amount} ⭐ создана!</b>\n\n"
-        f"К выплате: <b>{total_rub} ₽</b>\n\n"
-        f"Отправьте <b>{amount} звёзд</b> нашему боту через профиль и нажмите кнопку ниже."
+    # Отправляем официальный счет от Telegram на оплату нужного количества звезд
+    bot.send_invoice(
+        chat_id=message.chat.id,
+        title=f"Продажа {amount} Stars",
+        description=f"Перевод {amount} звезд боту. К выплате: {total_rub} ₽",
+        invoice_payload=f"sell_{amount}_{total_rub}", # Сохраняем сумму к выплате в payload
+        provider_token="", 
+        currency="XTR", 
+        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)]
     )
-    
-    # Кнопка "Оплатить" ровно на то количество звезд, которое ввел пользователь
-    markup = InlineKeyboardMarkup()
-    markup.row(InlineKeyboardButton(f"⭐ Оплатить {amount} ⭐", callback_data=f"pay_stars_{amount}"))
-    markup.row(InlineKeyboardButton("« Назад", callback_data="catalog"))
-    
-    bot.send_message(message.chat.id, text, reply_markup=markup)
 
 def process_buy_stars(message):
     if not message.text.isdigit() or int(message.text) < 50:
@@ -211,36 +211,25 @@ def process_ticket(message):
 # ================= ОПЛАТА ЗВЕЗДАМИ =================
 @bot.pre_checkout_query_handler(func=lambda query: True)
 def checkout(pre_checkout_query):
+    # Обязательно разрешаем оплату
     bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
-# Обработка колбэка для оплаты конкретного количества звезд
-@bot.callback_query_handler(func=lambda call: call.data.startswith("pay_stars_"))
-def handle_pay_stars(call):
-    amount = int(call.data.split("_")[2])
-    
-    bot.send_invoice(
-        chat_id=call.message.chat.id,
-        title=f"Оплата {amount} Stars",
-        description=f"Оплата {amount} звезд для подтверждения заявки.",
-        invoice_payload=f"sell_pay_{amount}",
-        provider_token="",
-        currency="XTR",
-        prices=[LabeledPrice(label=f"{amount} Stars", amount=amount)]
-    )
-    bot.answer_callback_query(call.id, "Счет выставлен!")
 
 @bot.message_handler(content_types=['successful_payment'])
 def got_payment(message):
     payment = message.successful_payment
+    payload = payment.invoice_payload
     
-    if payment.invoice_payload.startswith("sell_pay_"):
-        amount = int(payment.invoice_payload.split("_")[2])
-        # Считаем выплату в рублях по курсу 85
-        payout_rub = int(amount * RATE_USD * USD_TO_RUB)
+    # Проверяем, что это была продажа звезд
+    if payload.startswith("sell_"):
+        parts = payload.split("_")
+        amount = int(parts[1])
+        payout_rub = int(parts[2])
+        
         bot.send_message(
             message.chat.id, 
-            f"✅ <b>Оплата {amount} ⭐ прошла успешно!</b>\n\n"
-            f"Мы получили ваши звезды. Теперь выплата <b>{payout_rub} ₽</b> будет зачислена на ваш баланс.",
+            f"✅ <b>Успешно!</b>\n\n"
+            f"Вы продали <b>{amount} ⭐</b>.\n"
+            f"На ваш баланс зачислено: <b>{payout_rub} ₽</b>.",
             reply_markup=get_catalog_menu()
         )
     else:
