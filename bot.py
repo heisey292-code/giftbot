@@ -7,7 +7,7 @@ from telebot.types import (
 from flask import Flask, request
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "ТВОЙ_НОВЫЙ_ТОКЕН_ОТ_BOTFATHER" # Вставь токен!
+BOT_TOKEN =  "8800276454:AAF0QTpC9CcvbchTY_bE01BAm1uKvIyPyCQ" # Вставь токен!
 RATE_USD = 0.0106
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL", "https://giftbot-kbx9.onrender.com")
 WEBHOOK_PATH = f"/webhook/{BOT_TOKEN}"
