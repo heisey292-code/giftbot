@@ -5,7 +5,7 @@ from aiogram.filters import CommandStart
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, ReplyKeyboardMarkup,
-    KeyboardButton, FSInputFile
+    FSInputFile
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from flask import Flask
@@ -108,7 +108,7 @@ def bottom_menu_kb() -> ReplyKeyboardMarkup:
     kb = ReplyKeyboardBuilder()
     kb.button(text="📖 Все категории 📖")
     kb.button(text="📄 Наличие товаров 📄")
-    kb.button(text="Что это за магазин?")
+    kb.button(text="⭐ Отзывы ⭐")          # Заменили "Что за магазин" на Отзывы
     kb.button(text="👤 Профиль 👤")
     kb.adjust(2, 2) # По 2 кнопки в ряд
     return kb.as_markup(resize_keyboard=True, input_field_placeholder="Выбери действие...")
@@ -199,15 +199,6 @@ REVIEWS_TEXT = (
     f"📩 Хочешь оставить свой отзыв? Пиши — {SELLER}"
 )
 
-ABOUT_TEXT = (
-    "🏪 <b>ЧТО ЭТО ЗА МАГАЗИН?</b>\n\n"
-    "Мы — надежный сервис по продаже доната для игр Supercell.\n"
-    "✅ Работаем быстро и честно\n"
-    "⚡ Выдаем товар моментально после оплаты\n"
-    "🛡 Гарантируем безопасность твоего аккаунта\n\n"
-    f"📩 Связаться с продавцом: {SELLER}"
-)
-
 # ============================================================
 # ==================== ХЕНДЛЕРЫ ===============================
 # ============================================================
@@ -240,9 +231,14 @@ async def btn_all_categories(message: Message):
     else:
         await message.answer(MENU_TEXT, reply_markup=menu_kb(), parse_mode="HTML")
 
-@dp.message(F.text == "Что это за магазин?")
-async def btn_about(message: Message):
-    await message.answer(ABOUT_TEXT, parse_mode="HTML")
+@dp.message(F.text == "⭐ Отзывы ⭐")
+async def btn_reviews(message: Message):
+    image_path = IMAGES.get("reviews")
+    if image_path and os.path.exists(image_path):
+        photo = FSInputFile(image_path)
+        await message.answer_photo(photo=photo, caption=REVIEWS_TEXT, reply_markup=reviews_kb(), parse_mode="HTML")
+    else:
+        await message.answer(REVIEWS_TEXT, reply_markup=reviews_kb(), parse_mode="HTML")
 
 @dp.message(F.text == "👤 Профиль 👤")
 async def btn_profile(message: Message):
@@ -336,7 +332,7 @@ def keep_alive():
 
 async def main():
     keep_alive()
-    print("✅ Бот запущен с обновленным меню!")
+    print("✅ Бот запущен с новым нижним меню!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
