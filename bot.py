@@ -4,9 +4,10 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message, CallbackQuery,
-    InlineKeyboardMarkup, FSInputFile
+    InlineKeyboardMarkup, ReplyKeyboardMarkup,
+    KeyboardButton, FSInputFile
 )
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder, ReplyKeyboardBuilder
 from flask import Flask
 from threading import Thread
 
@@ -102,6 +103,17 @@ CATEGORIES = {
 # ==================== КЛАВИАТУРЫ =============================
 # ============================================================
 
+# --- Нижнее (Reply) меню ---
+def bottom_menu_kb() -> ReplyKeyboardMarkup:
+    kb = ReplyKeyboardBuilder()
+    kb.button(text="📖 Все категории 📖")
+    kb.button(text="📄 Наличие товаров 📄")
+    kb.button(text="Что это за магазин?")
+    kb.button(text="👤 Профиль 👤")
+    kb.adjust(2, 2) # По 2 кнопки в ряд
+    return kb.as_markup(resize_keyboard=True, input_field_placeholder="Выбери действие...")
+
+# --- Инлайн-меню ---
 def main_menu_kb() -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text="🛍 Меню", callback_data="menu")
@@ -169,7 +181,7 @@ START_TEXT = (
     "👑 Рояль Пассы для Clash Royale\n"
     "🛒 Пополнение корзины Supercell\n\n"
     "⚡ Быстрая выдача • 🛡 Безопасно • 💯 Проверено\n\n"
-    "Выбирай нужный раздел 👇"
+    "Используй кнопки ниже или нажми «🛍 Меню» 👇"
 )
 
 MENU_TEXT = (
@@ -187,6 +199,15 @@ REVIEWS_TEXT = (
     f"📩 Хочешь оставить свой отзыв? Пиши — {SELLER}"
 )
 
+ABOUT_TEXT = (
+    "🏪 <b>ЧТО ЭТО ЗА МАГАЗИН?</b>\n\n"
+    "Мы — надежный сервис по продаже доната для игр Supercell.\n"
+    "✅ Работаем быстро и честно\n"
+    "⚡ Выдаем товар моментально после оплаты\n"
+    "🛡 Гарантируем безопасность твоего аккаунта\n\n"
+    f"📩 Связаться с продавцом: {SELLER}"
+)
+
 # ============================================================
 # ==================== ХЕНДЛЕРЫ ===============================
 # ============================================================
@@ -196,9 +217,62 @@ async def cmd_start(message: Message):
     image_path = IMAGES.get("start")
     if image_path and os.path.exists(image_path):
         photo = FSInputFile(image_path)
-        await message.answer_photo(photo=photo, caption=START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
+        await message.answer_photo(
+            photo=photo, 
+            caption=START_TEXT, 
+            reply_markup=main_menu_kb(), 
+            parse_mode="HTML"
+        )
     else:
         await message.answer(START_TEXT, reply_markup=main_menu_kb(), parse_mode="HTML")
+    
+    # Отправляем нижнее меню отдельным сообщением, чтобы оно появилось
+    await message.answer("Используй нижнее меню для быстрой навигации 👇", reply_markup=bottom_menu_kb())
+
+# --- Обработчики нижнего (Reply) меню ---
+
+@dp.message(F.text == "📖 Все категории 📖")
+async def btn_all_categories(message: Message):
+    image_path = IMAGES.get("menu")
+    if image_path and os.path.exists(image_path):
+        photo = FSInputFile(image_path)
+        await message.answer_photo(photo=photo, caption=MENU_TEXT, reply_markup=menu_kb(), parse_mode="HTML")
+    else:
+        await message.answer(MENU_TEXT, reply_markup=menu_kb(), parse_mode="HTML")
+
+@dp.message(F.text == "Что это за магазин?")
+async def btn_about(message: Message):
+    await message.answer(ABOUT_TEXT, parse_mode="HTML")
+
+@dp.message(F.text == "👤 Профиль 👤")
+async def btn_profile(message: Message):
+    await message.answer(
+        f"👤 <b>Твой профиль</b>\n\n"
+        f"🆔 ID: <code>{message.from_user.id}</code>\n"
+        f"📛 Имя: {message.from_user.full_name}\n"
+        f"🔗 Юзернейм: @{message.from_user.username if message.from_user.username else 'нет'}\n\n"
+        f"📩 По вопросам покупок: {SELLER}",
+        parse_mode="HTML"
+    )
+
+@dp.message(F.text == "📄 Наличие товаров 📄")
+async def btn_stock(message: Message):
+    # Автоматически собираем список всего, что есть в CATEGORIES
+    text = "📄 <b>НАЛИЧИЕ ТОВАРОВ В МАГАЗИНЕ:</b>\n\n"
+    for key, (title, items) in CATEGORIES.items():
+        # Берем только первую строчку заголовка (например, "🎟 BRAWL PASS")
+        short_title = title.split('\n')[0]
+        text += f"{short_title}:\n"
+        for name, price in items:
+            text += f"  • {name} — {price}\n"
+        text += "\n"
+    
+    text += f"📩 За покупкой — {SELLER}"
+    
+    await message.answer(text, parse_mode="HTML")
+
+
+# --- Обработчики Инлайн-кнопок ---
 
 @dp.callback_query(F.data == "start")
 async def back_to_start(cb: CallbackQuery):
@@ -262,7 +336,7 @@ def keep_alive():
 
 async def main():
     keep_alive()
-    print("✅ Бот запущен с новыми ценами на корзины!")
+    print("✅ Бот запущен с обновленным меню!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
