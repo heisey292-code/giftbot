@@ -92,8 +92,8 @@ CATEGORIES = {
         [
             ("Корзина 10$", "300₽"),
             ("Корзина 30$", "750₽"),
-            ("Корзина 50$", "950₽"),
-            ("Корзина 100$", "1400₽"),
+            ("Корзина 50$", "1050₽"),
+            ("Корзина 100$", "1500₽"),
         ],
     ),
 }
@@ -147,7 +147,6 @@ def reviews_kb() -> InlineKeyboardMarkup:
 # ============================================================
 
 async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_key: str = None):
-    # Удаляем старое сообщение, чтобы избежать надписи "изменено"
     await cb.message.delete()
     
     image_path = IMAGES.get(image_key)
@@ -263,7 +262,7 @@ def keep_alive():
 
 async def main():
     keep_alive()
-    print("✅ Бот запущен! Сообщения без пометки 'изменено'.")
+    print("✅ Бот запущен с новыми ценами на корзины!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
