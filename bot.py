@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart
 from aiogram.types import (
     Message, CallbackQuery,
-    InlineKeyboardMarkup, InputMediaPhoto, FSInputFile
+    InlineKeyboardMarkup, FSInputFile
 )
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from flask import Flask
@@ -30,7 +30,7 @@ dp = Dispatcher()
 IMAGES = {
     "start": "start.jpg", 
     "menu": "menu.jpg", 
-    "reviews": "reviews.jpg", # <-- Добавили картинку для отзывов
+    "reviews": "reviews.jpg",
     "bp": "bp.jpg",
     "pro": "pro.jpg",
     "gems": "gems.jpg",
@@ -143,26 +143,20 @@ def reviews_kb() -> InlineKeyboardMarkup:
     return kb.as_markup()
 
 # ============================================================
-# ==================== ОТПРАВКА ФОТО ==========================
+# ==================== ОТПРАВКА СООБЩЕНИЙ =====================
 # ============================================================
 
 async def send_or_edit(cb: CallbackQuery, text: str, kb: InlineKeyboardMarkup, image_key: str = None):
+    # Удаляем старое сообщение, чтобы избежать надписи "изменено"
+    await cb.message.delete()
+    
     image_path = IMAGES.get(image_key)
     
     if image_path and os.path.exists(image_path):
         photo = FSInputFile(image_path)
-        media = InputMediaPhoto(media=photo, caption=text, parse_mode="HTML")
-        try:
-            await cb.message.edit_media(media=media, reply_markup=kb)
-        except Exception:
-            await cb.message.delete()
-            await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb, parse_mode="HTML")
+        await cb.message.answer_photo(photo=photo, caption=text, reply_markup=kb, parse_mode="HTML")
     else:
-        try:
-            await cb.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-        except Exception:
-            await cb.message.delete()
-            await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
+        await cb.message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 # ============================================================
 # ==================== ТЕКСТЫ =================================
@@ -219,7 +213,6 @@ async def show_menu(cb: CallbackQuery):
 
 @dp.callback_query(F.data == "reviews")
 async def show_reviews(cb: CallbackQuery):
-    # Привязали картинку "reviews" к экрану отзывов
     await send_or_edit(cb, REVIEWS_TEXT, reviews_kb(), image_key="reviews")
     await cb.answer()
 
@@ -270,7 +263,7 @@ def keep_alive():
 
 async def main():
     keep_alive()
-    print("✅ Бот запущен! Картинки отправляются как фото.")
+    print("✅ Бот запущен! Сообщения без пометки 'изменено'.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
